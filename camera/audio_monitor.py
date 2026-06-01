@@ -26,7 +26,8 @@ class AudioMonitor:
     alert_db 以上が連続したときにコールバックを呼ぶ。
     """
 
-    REFERENCE = 32768.0   # 16bit PCM の最大値 (0 dBFS 基準)
+    REFERENCE_INT   = 32768.0   # 16bit integer PCM (pcm_alaw 等)
+    REFERENCE_FLOAT = 1.0       # float32 PCM (aac 等)
 
     def __init__(
         self,
@@ -127,9 +128,12 @@ class AudioMonitor:
         container.close()
 
     def _process_window(self, samples: np.ndarray):
+        # float32 (-1〜1) か int16 (-32768〜32767) かを自動判定
+        ref = self.REFERENCE_FLOAT if np.max(np.abs(samples)) <= 1.0 \
+              else self.REFERENCE_INT
         rms = np.sqrt(np.mean(samples ** 2))
-        db = 20 * np.log10(rms / self.REFERENCE + 1e-9)
-        peak = 20 * np.log10(np.max(np.abs(samples)) / self.REFERENCE + 1e-9)
+        db = 20 * np.log10(rms / ref + 1e-9)
+        peak = 20 * np.log10(np.max(np.abs(samples)) / ref + 1e-9)
 
         now = time.time()
         level = NoiseLevel(timestamp=now, db=round(db, 1), peak_db=round(peak, 1))
