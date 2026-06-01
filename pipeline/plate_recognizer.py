@@ -62,8 +62,10 @@ class PlateRecognizer:
     """
 
     # 車両 bbox の下部何割を切り出すか (プレートは前後にある)
-    CROP_RATIO_BOTTOM = 0.55   # 下55%
-    CROP_RATIO_TOP    = 0.30   # 上30% (前面プレート用)
+    CROP_RATIO_BOTTOM = 0.60   # 下60%
+    CROP_RATIO_TOP    = 0.35   # 上35% (前面プレート用)
+    UPSCALE_FACTOR    = 4      # OCR前に何倍に拡大するか
+    MIN_CROP_PX       = 20     # これより小さいクロップは処理しない
 
     def __init__(
         self,
@@ -139,20 +141,37 @@ class PlateRecognizer:
         vehicle_bbox: tuple[int, int, int, int],
         vehicle_class: str,
     ) -> Optional[PlateResult]:
+        import cv2
+        if crop.shape[0] < self.MIN_CROP_PX or crop.shape[1] < self.MIN_CROP_PX:
+            return None
+
+        # 4倍アップスケール + シャープ処理 (小さなプレートのOCR精度向上)
+        h, w = crop.shape[:2]
+        enlarged = cv2.resize(
+            crop, (w * self.UPSCALE_FACTOR, h * self.UPSCALE_FACTOR),
+            interpolation=cv2.INTER_LANCZOS4,
+        )
+        kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=np.float32)
+        enlarged = cv2.filter2D(enlarged, -1, kernel)
+
         try:
-            ocr_results = self._reader.readtext(crop, detail=1)
+            ocr_results = self._reader.readtext(enlarged, detail=1)
         except Exception as e:
             logger.debug(f"OCR error: {e}")
             return None
 
-        # 全テキストを結合して正規化を試みる
-        full_text = " ".join(r[1] for r in ocr_results)
-        conf = float(np.mean([r[2] for r in ocr_results])) if ocr_results else 0.0
-        normalized = normalize_jp_plate(full_text)
-
-        if not normalized:
+        if not ocr_results:
             return None
 
+        full_text = " ".join(r[1] for r in ocr_results)
+        conf = float(np.mean([r[2] for r in ocr_results]))
+        normalized = normalize_jp_plate(full_text)
+
+        # デバッグ: プレート形式に合わなくても生テキストをログ出力
+        if full_text.strip():
+            logger.debug(f"OCR raw: '{full_text}'  normalized: '{normalized}'  conf={conf:.2f}")
+
+        # 正規化できなくても生テキストがあれば返す (デバッグ・改善に活用)
         return PlateResult(
             raw_text=full_text,
             normalized=normalized,

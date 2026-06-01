@@ -154,13 +154,17 @@ def process_video(
             last_plate = plate_recognizer.detect_from_vehicle_crops(
                 frame, vehicle_bboxes, frame_id=frame_count
             )
-            if last_plate.best:
-                p = last_plate.best
-                summary.plate_matches[p.normalized] = (
-                    summary.plate_matches.get(p.normalized, 0) + 1
-                )
-                print(f"  [{frame_count:5d}] プレート: {p.normalized} "
-                      f"(信頼度={p.confidence:.2f}  {p.vehicle_class})")
+            for p in last_plate.plates:
+                if p.normalized:
+                    summary.plate_matches[p.normalized] = (
+                        summary.plate_matches.get(p.normalized, 0) + 1
+                    )
+                    print(f"  [{frame_count:5d}] プレート: {p.normalized} "
+                          f"(信頼度={p.confidence:.2f}  {p.vehicle_class})")
+                elif p.raw_text.strip():
+                    # 正規化できなかった場合も生テキスト表示 (デバッグ用)
+                    print(f"  [{frame_count:5d}] OCR生: '{p.raw_text[:40]}' "
+                          f"(conf={p.confidence:.2f})")
 
         display = _overlay(frame, last_det, last_face, last_plate, face_matcher)
 
