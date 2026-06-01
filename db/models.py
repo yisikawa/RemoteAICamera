@@ -60,19 +60,22 @@ class KnownPerson(Base):
 
 
 class KnownVehicle(Base):
-    """登録済み車両マスター"""
+    """登録済み車両マスター (色・車種ベース、ナンバーは任意)"""
     __tablename__ = "known_vehicles"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    plate_number = Column(String(32), unique=True, nullable=False)
+    label = Column(String(128), unique=True, nullable=False)  # 識別ラベル
+    display_name = Column(String(256))
     owner_label = Column(String(128))         # KnownPerson.label との対応
-    vehicle_color = Column(String(32))
-    vehicle_type = Column(String(32))
+    vehicle_color = Column(String(32))        # 色名 (黒/白/シルバー/青 等)
+    vehicle_color_hsv = Column(String(64))    # HSV値 "h,s,v" (色照合用)
+    vehicle_type = Column(String(32))         # car/motorcycle/bus/truck
+    plate_number = Column(String(32))         # ナンバー (任意・参考情報)
+    thumbnail_path = Column(String(512))
     note = Column(Text)
     registered_at = Column(DateTime, default=datetime.now)
     last_seen_at = Column(DateTime)
     visit_count = Column(Integer, default=0)
-    thumbnail_path = Column(String(512))
     is_active = Column(Boolean, default=True)
 
 

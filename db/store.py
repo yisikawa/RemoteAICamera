@@ -96,6 +96,21 @@ class EventStore:
             if ai_description is not None:
                 record.ai_description = ai_description
 
+    def get_all_vehicles(self) -> list:
+        """is_active な全登録車両を返す"""
+        with self._session() as s:
+            rows = s.query(KnownVehicle).filter_by(is_active=True).all()
+            s.expunge_all()
+            return rows
+
+    def update_vehicle_seen(self, label: str):
+        """既知車両の最終通過時刻と通過回数を更新"""
+        with self._session() as s:
+            v = s.query(KnownVehicle).filter_by(label=label).first()
+            if v:
+                v.last_seen_at = datetime.now()
+                v.visit_count = (v.visit_count or 0) + 1
+
     def update_person_seen(self, face_label: str):
         """既知人物の最終通過時刻と通過回数を更新"""
         with self._session() as s:

@@ -18,6 +18,7 @@ from pipeline.detector import YOLODetector
 from pipeline.event_filter import EventFilter
 from pipeline.face_recognizer import FaceRecognizer
 from pipeline.face_matcher import FaceMatcher
+from pipeline.vehicle_analyzer import VehicleAnalyzer, hsv_to_str
 from storage.file_store import FileStore, FrameRingBuffer
 from db.store import EventStore
 
@@ -35,9 +36,10 @@ def setup_logging(level: str = "INFO", log_file: str = "data/app.log"):
 
 def camera_worker(
     cam_cfg: CameraConfig,
-    detector: YOLODetector,         # モデルは全カメラで共有 (VRAM節約)
+    detector: YOLODetector,
     face_recognizer: FaceRecognizer,
     face_matcher: FaceMatcher,
+    vehicle_analyzer: VehicleAnalyzer,
     file_store: FileStore,
     event_store: EventStore,
     cfg: AppConfig,
@@ -135,6 +137,31 @@ def camera_worker(
             post_frames = list(pre_frames)
             active_event = event
 
+            # --- 車両分析 (vehicle が含まれるイベント) ---
+            vehicle_color = None
+            vehicle_type = None
+            vehicle_match_label = None
+            if "vehicle" in event.detection_type:
+                known_vehicles = event_store.get_all_vehicles()
+                for d in result.vehicles:
+                    from pipeline.detector import COCO_CLASSES
+                    vtype = COCO_CLASSES.get(d.class_id, "car")
+                    ana = vehicle_analyzer.analyze(img, d.bbox, vtype)
+                    vehicle_color = ana.color_name
+                    vehicle_type = ana.vehicle_type_jp
+                    match = vehicle_analyzer.match(ana, known_vehicles)
+                    if match:
+                        vehicle_match_label = match.label
+                        cam_log.info(
+                            f"  既知車両: {match.display_name} "
+                            f"({ana.color_name} {ana.vehicle_type_jp}  score={match.score:.2f})"
+                        )
+                    else:
+                        cam_log.info(
+                            f"  車両: {ana.color_name} {ana.vehicle_type_jp} (未登録)"
+                        )
+                    break  # 最大の車両1台を代表として記録
+
             event_store.save_event(event, snapshot_path=snapshot_path)
             if face_label:
                 event_store.update_event_recognition(
@@ -143,6 +170,14 @@ def camera_worker(
                     face_confidence=face_sim,
                 )
                 event_store.update_person_seen(face_label)
+            if vehicle_color or vehicle_type:
+                event_store.update_event_recognition(
+                    event.event_id,
+                    vehicle_color=vehicle_color,
+                    vehicle_type=vehicle_type,
+                )
+            if vehicle_match_label:
+                event_store.update_vehicle_seen(vehicle_match_label)
             event_store.save_snapshot_record(
                 file_path=snapshot_path,
                 event_id=event.event_id,
@@ -207,6 +242,8 @@ def run(config_path: str = "config.yaml", show_window: bool = False):
     face_matcher = FaceMatcher(faces_dir=cfg.storage.faces_dir)
     face_matcher.load()
 
+    vehicle_analyzer = VehicleAnalyzer()
+
     file_store = FileStore(
         snapshots_dir=cfg.storage.snapshots_dir,
         clips_dir=cfg.storage.clips_dir,
@@ -232,7 +269,7 @@ def run(config_path: str = "config.yaml", show_window: bool = False):
         t = threading.Thread(
             target=camera_worker,
             args=(cam_cfg, detector, face_recognizer, face_matcher,
-                  file_store, event_store, cfg, stop_event, show_window),
+                  vehicle_analyzer, file_store, event_store, cfg, stop_event, show_window),
             name=f"cam-{cam_cfg.name}",
             daemon=True,
         )
