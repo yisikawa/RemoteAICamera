@@ -32,6 +32,7 @@ from pipeline.detector import YOLODetector
 from pipeline.face_recognizer import FaceRecognizer
 from pipeline.face_matcher import FaceMatcher
 from pipeline.plate_recognizer import PlateRecognizer
+from pipeline.vehicle_analyzer import VehicleAnalyzer
 
 VEHICLE_CLASSES = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 
@@ -43,8 +44,9 @@ class VideoSummary:
     processed_frames: int = 0
     person_events: int = 0
     vehicle_events: int = 0
-    face_matches: dict = field(default_factory=dict)   # label -> count
-    plate_matches: dict = field(default_factory=dict)  # plate -> count
+    face_matches: dict = field(default_factory=dict)    # label -> count
+    plate_matches: dict = field(default_factory=dict)   # plate -> count
+    vehicle_colors: dict = field(default_factory=dict)  # "色 車種" -> count
     elapsed_sec: float = 0.0
 
 
@@ -54,6 +56,7 @@ def process_video(
     face_recognizer: FaceRecognizer,
     face_matcher: FaceMatcher,
     plate_recognizer: PlateRecognizer,
+    vehicle_analyzer: VehicleAnalyzer,
     save_output: bool = False,
     speed: float = 1.0,
 ) -> VideoSummary:
@@ -145,6 +148,23 @@ def process_video(
                         print(f"  [{frame_count:5d}] 顔一致: {match.label} "
                               f"(類似度={match.similarity:.2f})")
 
+        # 車両色・車種分析
+        last_vehicle_analyses = []
+        if has_vehicle:
+            for d in last_det.vehicles:
+                vtype = VEHICLE_CLASSES.get(d.class_id, "car")
+                ana = vehicle_analyzer.analyze(frame, d.bbox, vtype)
+                last_vehicle_analyses.append(ana)
+                key = f"{ana.color_name} {ana.vehicle_type_jp}"
+                summary.vehicle_colors[key] = summary.vehicle_colors.get(key, 0) + 1
+
+            # 車両色サマリーを数フレームおきに表示 (毎フレームは冗長なので5回に1回)
+            if frame_count % 15 == 0 and last_vehicle_analyses:
+                color_summary = ", ".join(
+                    f"{a.color_name}{a.vehicle_type_jp}" for a in last_vehicle_analyses
+                )
+                print(f"  [{frame_count:5d}] 車両: {color_summary}")
+
         # ナンバープレート認識
         if has_vehicle:
             vehicle_bboxes = [
@@ -162,11 +182,11 @@ def process_video(
                     print(f"  [{frame_count:5d}] プレート: {p.normalized} "
                           f"(信頼度={p.confidence:.2f}  {p.vehicle_class})")
                 elif p.raw_text.strip():
-                    # 正規化できなかった場合も生テキスト表示 (デバッグ用)
                     print(f"  [{frame_count:5d}] OCR生: '{p.raw_text[:40]}' "
                           f"(conf={p.confidence:.2f})")
 
-        display = _overlay(frame, last_det, last_face, last_plate, face_matcher)
+        display = _overlay(frame, last_det, last_face, last_plate, face_matcher,
+                           last_vehicle_analyses)
 
         # フレーム番号・進捗表示
         progress = f"{frame_count}/{total} ({100*frame_count//total if total else 0}%)"
@@ -195,19 +215,28 @@ def process_video(
     return summary
 
 
-def _overlay(frame, det, face_result, plate_result, face_matcher):
+def _overlay(frame, det, face_result, plate_result, face_matcher,
+             vehicle_analyses=None):
     """検出結果をフレームに重ねて返す"""
     import cv2
     out = frame.copy()
-    if det:
-        from pipeline.detector import DetectionResult
-        # YOLO ボックス描画
-        for d in det.detections:
-            color = (0, 255, 0) if d.is_person else (0, 128, 255)
+    # 車両色ラベル (vehicle_analyses と det の順序を合わせて描画)
+    if vehicle_analyses and det:
+        vehicles = [d for d in det.detections if not d.is_person]
+        for d, ana in zip(vehicles, vehicle_analyses):
             x1, y1, x2, y2 = d.bbox
-            cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(out, f"{d.class_name} {d.confidence:.2f}",
-                        (x1, y1 - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+            cv2.rectangle(out, (x1, y1), (x2, y2), (0, 165, 255), 2)
+            cv2.putText(out, f"{ana.color_name} {ana.vehicle_type_jp}",
+                        (x1, y2 + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
+    if det:
+        # 人物ボックス描画
+        for d in det.detections:
+            if not d.is_person:
+                continue
+            x1, y1, x2, y2 = d.bbox
+            cv2.rectangle(out, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(out, f"person {d.confidence:.2f}",
+                        (x1, y1 - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
     if face_result:
         for face in face_result.faces:
             x1, y1, x2, y2 = face.bbox
@@ -233,12 +262,16 @@ def _print_summary(s: VideoSummary):
         print("  顔一致:")
         for label, cnt in sorted(s.face_matches.items(), key=lambda x: -x[1]):
             print(f"    {label}: {cnt} フレームで検出")
+    if s.vehicle_colors:
+        print("  検出車両 (色・車種):")
+        for key, cnt in sorted(s.vehicle_colors.items(), key=lambda x: -x[1]):
+            print(f"    {key}: {cnt} フレームで検出")
     if s.plate_matches:
         print("  ナンバープレート:")
         for plate, cnt in sorted(s.plate_matches.items(), key=lambda x: -x[1]):
             print(f"    {plate}: {cnt} フレームで検出")
-    if not s.face_matches and not s.plate_matches:
-        print("  認識結果なし (登録人物・プレートなし、または映像距離が遠い)")
+    if not s.face_matches and not s.vehicle_colors and not s.plate_matches:
+        print("  検出なし")
 
 
 def main():
@@ -284,6 +317,8 @@ def main():
 
     plate_recognizer = PlateRecognizer(device=cfg.detection.device)
     plate_recognizer.load()
+
+    vehicle_analyzer = VehicleAnalyzer()
     print("ロード完了\n")
 
     # 処理対象ファイルの収集
@@ -292,7 +327,6 @@ def main():
         videos = [args.video]
     elif args.folder:
         folder = Path(args.folder)
-        # 拡張子を小文字統一して重複排除 (Windowsは大文字小文字同一視)
         videos = sorted(
             {f for f in folder.iterdir()
              if f.is_file() and f.suffix.lower() in (".mp4", ".avi", ".mkv", ".mov")},
@@ -302,7 +336,8 @@ def main():
 
     for v in videos:
         process_video(
-            str(v), detector, face_recognizer, face_matcher, plate_recognizer,
+            str(v), detector, face_recognizer, face_matcher,
+            plate_recognizer, vehicle_analyzer,
             save_output=args.save, speed=args.speed,
         )
 
