@@ -1,9 +1,12 @@
 # カメラ連携
 pytapo==3.3.15
 
-# 映像取得・画像処理
+# 映像取得・画像処理 (headless版はGUI非対応のため明示的に除外)
 opencv-python>=4.10.0
 numpy==1.26.4
+
+# ナンバープレート認識
+easyocr==1.7.2
 
 # 物体検出 (YOLOv8) - CUDAは別途 torch インストール必要
 ultralytics==8.3.0
