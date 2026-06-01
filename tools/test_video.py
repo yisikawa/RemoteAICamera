@@ -5,10 +5,10 @@ Tapo の SD カード動画 (MP4) をダウンロードして指定するだけ�
 
 使い方:
   # 動画ファイルを指定
-  .venv\Scripts\python.exe tools/test_video.py --video path/to/clip.mp4
+  .venv\Scripts\python.exe tools/test_video.py --video data/test_videos/clip.mp4
 
-  # フォルダ内の全動画を一括処理
-  .venv\Scripts\python.exe tools/test_video.py --folder path/to/folder
+  # data/test_videos/ 内の全動画を一括処理 (引数省略で自動使用)
+  .venv\Scripts\python.exe tools/test_video.py
 
   # 処理結果の動画も保存する
   .venv\Scripts\python.exe tools/test_video.py --video clip.mp4 --save
@@ -245,8 +245,17 @@ def main():
     parser.add_argument("--speed", type=float, default=1.0, help="再生速度倍率 (0.3 で1/3速)")
     args = parser.parse_args()
 
+    # 引数省略時は data/test_videos/ をデフォルトフォルダとして使用
     if not args.video and not args.folder:
-        parser.error("--video か --folder を指定してください")
+        default_folder = Path("data/test_videos")
+        if default_folder.exists() and any(default_folder.iterdir()):
+            args.folder = str(default_folder)
+            print(f"デフォルトフォルダを使用: {default_folder.resolve()}")
+        else:
+            parser.error(
+                "--video か --folder を指定してください\n"
+                "  または data/test_videos/ に動画ファイルを置いて引数なしで実行"
+            )
 
     cfg = load_config()
 
