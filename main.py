@@ -1,7 +1,7 @@
 """
-RemoteAICamera - Phase 1 メインループ
+RemoteAICamera - Phase 2 メインループ
 複数の Tapo C520W からの RTSP ストリームを並列受信し、
-YOLOv8 で人体・車両を検出してイベントを記録する。
+YOLOv8 で人体・車両を検出、InsightFace で顔照合してイベントを記録する。
 """
 import sys
 import time
@@ -16,6 +16,8 @@ from camera.rtsp_capture import RTSPCapture
 from camera.tapo_client import TapoClient
 from pipeline.detector import YOLODetector
 from pipeline.event_filter import EventFilter
+from pipeline.face_recognizer import FaceRecognizer
+from pipeline.face_matcher import FaceMatcher
 from storage.file_store import FileStore, FrameRingBuffer
 from db.store import EventStore
 
@@ -33,7 +35,9 @@ def setup_logging(level: str = "INFO", log_file: str = "data/app.log"):
 
 def camera_worker(
     cam_cfg: CameraConfig,
-    detector: YOLODetector,       # モデルは全カメラで共有 (スレッドセーフ)
+    detector: YOLODetector,         # モデルは全カメラで共有 (VRAM節約)
+    face_recognizer: FaceRecognizer,
+    face_matcher: FaceMatcher,
     file_store: FileStore,
     event_store: EventStore,
     cfg: AppConfig,
@@ -100,12 +104,28 @@ def camera_worker(
 
         event = event_filter.process(result)
         if event:
+            event.event_id = f"{cam_cfg.name}_{event.event_id}"
+
+            # --- 顔認識 (person が含まれるイベントのみ) ---
+            face_label = None
+            face_sim = None
+            if "person" in event.detection_type:
+                face_matcher.reload_if_stale()
+                face_result = face_recognizer.detect(img, frame_id=frame_obj.frame_id)
+                for face in face_result.faces:
+                    if face.embedding is not None:
+                        match = face_matcher.match(face.embedding)
+                        if match:
+                            face_label = match.label
+                            face_sim = match.similarity
+                            break   # 最初にマッチした人物を採用
+
+            label_str = f" → {face_label} ({face_sim:.2f})" if face_label else " → 未登録"
             cam_log.info(
                 f"[EVENT] {event.event_id} | type={event.detection_type} | "
-                f"frames={event.frame_count} | dur={event.duration_sec:.1f}s"
+                f"frames={event.frame_count} | dur={event.duration_sec:.1f}s{label_str if 'person' in event.detection_type else ''}"
             )
-            # カメラ名をイベントIDに付加して区別
-            event.event_id = f"{cam_cfg.name}_{event.event_id}"
+
             snapshot_path = file_store.save_snapshot(
                 img, event_id=event.event_id, prefix=cam_cfg.name
             )
@@ -116,6 +136,13 @@ def camera_worker(
             active_event = event
 
             event_store.save_event(event, snapshot_path=snapshot_path)
+            if face_label:
+                event_store.update_event_recognition(
+                    event.event_id,
+                    face_label=face_label,
+                    face_confidence=face_sim,
+                )
+                event_store.update_person_seen(face_label)
             event_store.save_snapshot_record(
                 file_path=snapshot_path,
                 event_id=event.event_id,
@@ -156,10 +183,10 @@ def run(config_path: str = "config.yaml", show_window: bool = False):
     cfg = load_config(config_path)
     setup_logging()
     logger.bind(cam="main").info(
-        f"=== RemoteAICamera Phase 1 starting ({len(cfg.cameras)} camera(s)) ==="
+        f"=== RemoteAICamera Phase 2 starting ({len(cfg.cameras)} camera(s)) ==="
     )
 
-    # YOLOv8 は1インスタンスを全カメラで共有 (VRAM節約)
+    # YOLOv8 / FaceRecognizer は全カメラで共有 (VRAM節約)
     detector = YOLODetector(
         model_name=cfg.detection.yolo_model,
         confidence=cfg.detection.confidence,
@@ -169,6 +196,16 @@ def run(config_path: str = "config.yaml", show_window: bool = False):
     )
     logger.bind(cam="main").info("Loading YOLOv8 model...")
     detector.load()
+
+    face_recognizer = FaceRecognizer(
+        device=cfg.detection.device,
+        models_dir=cfg.storage.base_dir + "/models",
+    )
+    logger.bind(cam="main").info("Loading FaceRecognizer...")
+    face_recognizer.load()
+
+    face_matcher = FaceMatcher(faces_dir=cfg.storage.faces_dir)
+    face_matcher.load()
 
     file_store = FileStore(
         snapshots_dir=cfg.storage.snapshots_dir,
@@ -194,7 +231,8 @@ def run(config_path: str = "config.yaml", show_window: bool = False):
     for cam_cfg in cfg.cameras:
         t = threading.Thread(
             target=camera_worker,
-            args=(cam_cfg, detector, file_store, event_store, cfg, stop_event, show_window),
+            args=(cam_cfg, detector, face_recognizer, face_matcher,
+                  file_store, event_store, cfg, stop_event, show_window),
             name=f"cam-{cam_cfg.name}",
             daemon=True,
         )

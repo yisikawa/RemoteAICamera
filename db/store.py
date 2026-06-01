@@ -96,6 +96,14 @@ class EventStore:
             if ai_description is not None:
                 record.ai_description = ai_description
 
+    def update_person_seen(self, face_label: str):
+        """既知人物の最終通過時刻と通過回数を更新"""
+        with self._session() as s:
+            person = s.query(KnownPerson).filter_by(label=face_label).first()
+            if person:
+                person.last_seen_at = datetime.now()
+                person.visit_count = (person.visit_count or 0) + 1
+
     # ------------------------------------------------------------------ #
     # クエリ                                                                #
     # ------------------------------------------------------------------ #
