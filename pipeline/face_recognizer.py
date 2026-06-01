@@ -80,22 +80,47 @@ class FaceRecognizer:
         self._app = None
 
     def load(self):
+        # Windows: PyTorch が持つ CUDA/cuDNN DLL を onnxruntime に認識させる
+        # (onnxruntime_providers_cuda.dll は cudart/cublas/cudnn を動的ロードするため)
+        self._add_torch_dll_directory()
+
         try:
-            import insightface
             from insightface.app import FaceAnalysis
 
+            providers = (
+                ["CUDAExecutionProvider", "CPUExecutionProvider"]
+                if self.device == "cuda"
+                else ["CPUExecutionProvider"]
+            )
             ctx_id = 0 if self.device == "cuda" else -1
             self._app = FaceAnalysis(
                 name=self.model_pack,
                 root=str(self.models_dir),
-                providers=["CUDAExecutionProvider"] if self.device == "cuda"
-                          else ["CPUExecutionProvider"],
+                providers=providers,
             )
             self._app.prepare(ctx_id=ctx_id, det_size=self.det_size)
+
+            # 実際に使われた provider を確認
+            used = self._app.models.get("detection", None)
             logger.info(f"FaceRecognizer loaded: {self.model_pack} on {self.device}")
         except Exception as e:
             logger.error(f"Failed to load FaceRecognizer: {e}")
             raise
+
+    @staticmethod
+    def _add_torch_dll_directory():
+        """Windows 専用: PyTorch の lib フォルダを DLL 検索パスに追加する"""
+        import os
+        if os.name != "nt":
+            return
+        try:
+            import torch
+            lib_path = os.path.join(os.path.dirname(torch.__file__), "lib")
+            if os.path.isdir(lib_path):
+                os.add_dll_directory(lib_path)
+                logger.debug(f"Added DLL directory: {lib_path}")
+        except Exception as e:
+            logger.warning(f"Could not add torch DLL directory: {e}")
 
     def detect(self, frame: np.ndarray, frame_id: int = 0) -> FaceDetectionResult:
         if self._app is None:
