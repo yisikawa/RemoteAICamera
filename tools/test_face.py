@@ -66,6 +66,8 @@ def test_with_camera(cam_index: int, recognizer: FaceRecognizer):
 
     print("顔検出開始 (q で終了)...")
     frame_count = 0
+    last_result = None   # 最後の検出結果を保持 → 全フレームに描画し続ける
+
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -73,21 +75,27 @@ def test_with_camera(cam_index: int, recognizer: FaceRecognizer):
             break
 
         frame_count += 1
-        if frame_count % 3 != 0:   # 3フレームおきに推論
-            cv2.imshow(f"Face Detection [{cam_cfg.name}]", cv2.resize(frame, (960, 540)))
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
-            continue
 
-        result = recognizer.detect(frame, frame_id=frame_count)
-        if result.has_faces:
-            print(f"[{time.strftime('%H:%M:%S')}] 顔検出: {len(result.faces)}人  "
-                  f"推論{result.inference_ms:.0f}ms")
+        # 3フレームおきに推論 (推論中もループをブロックしない設計に変更)
+        if frame_count % 3 == 0:
+            last_result = recognizer.detect(frame, frame_id=frame_count)
+            if last_result.has_faces:
+                print(f"[{time.strftime('%H:%M:%S')}] 顔検出: {len(last_result.faces)}人  "
+                      f"推論{last_result.inference_ms:.0f}ms")
 
-        display = recognizer.draw(frame, result)
+        # 推論結果がなければ raw フレームを表示、あれば枠を重ねて表示
+        if last_result is not None:
+            display = recognizer.draw(frame, last_result)
+            face_count = len(last_result.faces)
+            inf_ms = last_result.inference_ms
+        else:
+            display = frame.copy()
+            face_count = 0
+            inf_ms = 0.0
+
         cv2.putText(display,
-                    f"Faces: {len(result.faces)}  {result.inference_ms:.0f}ms",
-                    (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+                    f"Faces: {face_count}  {inf_ms:.0f}ms",
+                    (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         cv2.imshow(f"Face Detection [{cam_cfg.name}]", cv2.resize(display, (960, 540)))
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
