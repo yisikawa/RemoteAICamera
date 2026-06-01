@@ -292,8 +292,12 @@ def main():
         videos = [args.video]
     elif args.folder:
         folder = Path(args.folder)
-        videos = sorted(folder.glob("*.mp4")) + sorted(folder.glob("*.avi")) + \
-                 sorted(folder.glob("*.mkv")) + sorted(folder.glob("*.MP4"))
+        # 拡張子を小文字統一して重複排除 (Windowsは大文字小文字同一視)
+        videos = sorted(
+            {f for f in folder.iterdir()
+             if f.is_file() and f.suffix.lower() in (".mp4", ".avi", ".mkv", ".mov")},
+            key=lambda f: f.name.lower()
+        )
         print(f"フォルダ内動画: {len(videos)} ファイル")
 
     for v in videos:
