@@ -26,7 +26,7 @@ class CameraConfig:
 class DetectionConfig:
     yolo_model: str = "yolov8s.pt"
     confidence: float = 0.5
-    target_classes: list[int] = field(default_factory=lambda: [0, 2, 3, 5, 7])
+    target_classes: list[int] = field(default_factory=lambda: [0, 1, 2, 3, 5, 7])
     device: str = "cuda"
     frame_skip: int = 2
 

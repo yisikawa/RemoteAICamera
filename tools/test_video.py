@@ -34,7 +34,7 @@ from pipeline.face_matcher import FaceMatcher
 from pipeline.plate_recognizer import PlateRecognizer
 from pipeline.vehicle_analyzer import VehicleAnalyzer
 
-VEHICLE_CLASSES = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
+VEHICLE_CLASSES = {1: "bicycle", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 
 
 @dataclass

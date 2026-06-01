@@ -31,7 +31,7 @@ from db.models import KnownVehicle
 from datetime import datetime
 
 VEHICLES_DIR = Path("data/vehicles")
-VEHICLE_CLASSES = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
+VEHICLE_CLASSES = {1: "bicycle", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 
 
 def _upsert_vehicle(

@@ -31,6 +31,7 @@ _COLOR_MAP = [
 ]
 
 VEHICLE_TYPE_JP = {
+    "bicycle":    "自転車",
     "car":        "乗用車",
     "motorcycle": "バイク",
     "bus":        "バス",

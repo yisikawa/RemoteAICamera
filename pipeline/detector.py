@@ -11,6 +11,7 @@ from loguru import logger
 # YOLOv8 対象クラス (COCO)
 COCO_CLASSES = {
     0: "person",
+    1: "bicycle",
     2: "car",
     3: "motorcycle",
     5: "bus",
