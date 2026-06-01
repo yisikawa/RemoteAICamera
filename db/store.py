@@ -37,32 +37,60 @@ class EventStore:
 
     def save_event(
         self,
-        event: DetectionEvent,
+        event: Optional[DetectionEvent] = None,
         snapshot_path: Optional[str] = None,
         clip_path: Optional[str] = None,
+        # DirectCall用パラメータ (event=Noneの場合)
+        event_id: Optional[str] = None,
+        started_at: Optional[float] = None,
+        ended_at: Optional[float] = None,
+        detection_type: Optional[str] = None,
+        frame_count: int = 0,
     ) -> DetectionEventRecord:
-        detections_data = [
-            {
-                "class_name": d.class_name,
-                "confidence": round(d.confidence, 4),
-                "bbox": list(d.bbox),
-            }
-            for d in event.best_detections
-        ]
-        record = DetectionEventRecord(
-            event_id=event.event_id,
-            started_at=datetime.fromtimestamp(event.started_at),
-            ended_at=datetime.fromtimestamp(event.ended_at),
-            duration_sec=round(event.duration_sec, 2),
-            detection_type=event.detection_type,
-            frame_count=event.frame_count,
-            snapshot_path=snapshot_path,
-            clip_path=clip_path,
-            detections_json=detections_data,
-        )
+        """
+        イベント記録。
+        event: DetectionEvent を渡すか、event_id/started_at/... を直接指定。
+        """
+        if event:
+            # DetectionEvent オブジェクトから
+            detections_data = [
+                {
+                    "class_name": d.class_name,
+                    "confidence": round(d.confidence, 4),
+                    "bbox": list(d.bbox),
+                }
+                for d in event.best_detections
+            ]
+            record = DetectionEventRecord(
+                event_id=event.event_id,
+                started_at=datetime.fromtimestamp(event.started_at),
+                ended_at=datetime.fromtimestamp(event.ended_at),
+                duration_sec=round(event.duration_sec, 2),
+                detection_type=event.detection_type,
+                frame_count=event.frame_count,
+                snapshot_path=snapshot_path,
+                clip_path=clip_path,
+                detections_json=detections_data,
+            )
+            event_id_log = event.event_id
+        else:
+            # 直接値から (ONVIF駆動型用)
+            record = DetectionEventRecord(
+                event_id=event_id,
+                started_at=datetime.fromtimestamp(started_at) if started_at else datetime.now(),
+                ended_at=datetime.fromtimestamp(ended_at) if ended_at else datetime.now(),
+                duration_sec=round((ended_at or started_at or 0) - (started_at or 0), 2),
+                detection_type=detection_type or "motion",
+                frame_count=frame_count,
+                snapshot_path=snapshot_path,
+                clip_path=clip_path,
+                detections_json=[],
+            )
+            event_id_log = event_id or "unknown"
+
         with self._session() as s:
             s.add(record)
-        logger.debug(f"Event saved: {event.event_id} ({event.detection_type})")
+        logger.debug(f"Event saved: {event_id_log} ({detection_type or 'motion'})")
         return record
 
     def update_event_recognition(

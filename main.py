@@ -1,7 +1,7 @@
 """
-RemoteAICamera - Phase 2 メインループ
-複数の Tapo C520W からの RTSP ストリームを並列受信し、
-YOLOv8 で人体・車両を検出、InsightFace で顔照合してイベントを記録する。
+RemoteAICamera - ONVIF イベント駆動型
+Tapo C520W の ONVIF イベント (人物・車両検知) をトリガーに
+15秒クリップを RTSP から抽出・分析してイベント記録する。
 """
 import sys
 import time
@@ -13,13 +13,10 @@ from loguru import logger
 
 from config import load_config, CameraConfig, AppConfig
 from camera.rtsp_capture import RTSPCapture
-from camera.tapo_client import TapoClient
+from camera.tapo_client import TapoClient, MotionEvent
 from pipeline.detector import YOLODetector
-from pipeline.event_filter import EventFilter
-from pipeline.face_recognizer import FaceRecognizer
-from pipeline.face_matcher import FaceMatcher
-from pipeline.vehicle_analyzer import VehicleAnalyzer, hsv_to_str
-from storage.file_store import FileStore, FrameRingBuffer
+from pipeline.clip_analyzer import ClipAnalyzer
+from storage.file_store import FileStore
 from db.store import EventStore
 
 
@@ -34,20 +31,90 @@ def setup_logging(level: str = "INFO", log_file: str = "data/app.log"):
                format="{time:YYYY-MM-DD HH:mm:ss} | {level:8} | {extra[cam]} | {message}")
 
 
+def handle_clip(
+    trigger_event: MotionEvent,
+    cam_cfg: CameraConfig,
+    capture: RTSPCapture,
+    clip_analyzer: ClipAnalyzer,
+    file_store: FileStore,
+    event_store: EventStore,
+    cfg: AppConfig,
+    cam_log,
+):
+    """
+    ONVIF イベント検知後、15秒クリップを収集・分析・保存する。
+    (バックグラウンドスレッドで実行)
+    """
+    try:
+        event_id = f"{cam_cfg.name}_{trigger_event.timestamp:.0f}"
+
+        # ポストロール待機
+        time.sleep(cfg.storage.clip_post_seconds)
+
+        # フレーム収集 (15秒分)
+        frames = capture.get_recent_frames(cfg.storage.clip_duration_sec)
+        if not frames or len(frames) < 5:
+            cam_log.warning(f"[{event_id}] Not enough frames: {len(frames) if frames else 0}")
+            return
+
+        # 分析 (every 5th frame に YOLO推論)
+        result = clip_analyzer.analyze(frames, event_id=event_id, frame_interval=5)
+        if not result:
+            cam_log.warning(f"[{event_id}] Analysis failed")
+            return
+
+        # スナップショット保存
+        snapshot_path = file_store.save_snapshot(
+            result.best_frame, event_id=event_id, prefix=cam_cfg.name
+        )
+
+        # クリップ保存 (フレーム list をタプルに変換)
+        frames_as_list = [(img, ts) for img, ts in frames]
+        clip_path = file_store.save_clip(
+            frames_as_list, event_id=event_id, fps=capture.fps or 15
+        )
+
+        # DB 記録
+        event_store.save_event(
+            event_id=event_id,
+            started_at=result.started_at,
+            ended_at=result.ended_at,
+            detection_type=result.detection_type,
+            frame_count=result.frame_count,
+            snapshot_path=snapshot_path,
+            clip_path=clip_path,
+        )
+        event_store.save_snapshot_record(
+            file_path=snapshot_path,
+            event_id=event_id,
+            snapshot_type="event",
+            width=result.best_frame.shape[1],
+            height=result.best_frame.shape[0],
+            file_size_bytes=Path(snapshot_path).stat().st_size if snapshot_path else 0,
+        )
+
+        cam_log.info(
+            f"[EVENT] {event_id} | type={result.detection_type} | "
+            f"confidence={result.best_confidence:.2f} | frames={result.frame_count} | "
+            f"snapshot={Path(snapshot_path).name if snapshot_path else '?'} | "
+            f"clip={Path(clip_path).name if clip_path else '?'}"
+        )
+
+    except Exception as e:
+        cam_log.error(f"handle_clip error: {e}", exc_info=True)
+
+
 def camera_worker(
     cam_cfg: CameraConfig,
     detector: YOLODetector,
-    face_recognizer: FaceRecognizer,
-    face_matcher: FaceMatcher,
-    vehicle_analyzer: VehicleAnalyzer,
     file_store: FileStore,
     event_store: EventStore,
     cfg: AppConfig,
     stop_event: threading.Event,
-    show_window: bool = False,
 ):
     cam_log = logger.bind(cam=cam_cfg.name)
 
+    # Tapo API 接続 (ONVIF イベント取得用)
     tapo = TapoClient(
         host=cam_cfg.host,
         username=cam_cfg.username,
@@ -56,18 +123,18 @@ def camera_worker(
         rtsp_password=cam_cfg.rtsp_password,
     )
     if not tapo.connect():
-        cam_log.warning("Tapo API unavailable — RTSP only")
+        cam_log.warning("Tapo API unavailable — cannot poll ONVIF events")
+        return
 
+    # RTSP キャプチャ開始 (フレームバッファ保持)
     rtsp_url = tapo.get_rtsp_url(cam_cfg.rtsp_stream)
     capture = RTSPCapture(
         rtsp_url=rtsp_url,
-        buffer_seconds=max(10, int(cfg.storage.clip_pre_seconds) + 5),
+        buffer_seconds=max(20, int(cfg.storage.clip_duration_sec) + 5),
         reconnect_interval=cam_cfg.reconnect_interval,
     )
-    event_filter = EventFilter(min_frames=3, cooldown_sec=5.0)
-    ring_buf = FrameRingBuffer(pre_seconds=cfg.storage.clip_pre_seconds + 1, fps_hint=15)
-
     capture.start()
+
     cam_log.info(f"Waiting for stream: {rtsp_url}")
     for _ in range(50):
         if capture.latest_frame():
@@ -80,135 +147,46 @@ def camera_worker(
 
     cam_log.info(f"Stream connected. FPS={capture.fps:.1f}")
 
-    import cv2
-    frame_counter = 0
-    post_frames: list = []
-    collecting_post = False
-    post_collect_end = 0.0
-    active_event = None
+    # ClipAnalyzer (YOLO推論用)
+    clip_analyzer = ClipAnalyzer(detector)
+
+    # ONVIF ポーリング ループ
+    last_poll = 0.0
+    cooldown_until = 0.0
+    collecting = threading.Event()
 
     while not stop_event.is_set():
-        frame_obj = capture.latest_frame()
-        if frame_obj is None:
-            time.sleep(0.05)
-            continue
+        now = time.time()
 
-        img = frame_obj.data
-        ts = frame_obj.timestamp
-        frame_counter += 1
-        ring_buf.push(img, ts)
+        # ONVIF イベント 2秒ポーリング
+        if now - last_poll >= cam_cfg.motion_poll_interval:
+            last_poll = now
+            if not collecting.is_set() and now >= cooldown_until:
+                try:
+                    events = tapo.poll_events()
+                    if events:
+                        trigger = events[0]
+                        collecting.set()
+                        cooldown_until = now + cfg.storage.clip_duration_sec + 5
+                        cam_log.debug(f"ONVIF event: {trigger.detection_type}")
 
-        if frame_counter % (cfg.detection.frame_skip + 1) != 0:
-            time.sleep(0.01)
-            continue
-
-        result = detector.detect(img, frame_id=frame_obj.frame_id)
-
-        event = event_filter.process(result)
-        if event:
-            event.event_id = f"{cam_cfg.name}_{event.event_id}"
-
-            # --- 顔認識 (person が含まれるイベントのみ) ---
-            face_label = None
-            face_sim = None
-            if "person" in event.detection_type:
-                face_matcher.reload_if_stale()
-                face_result = face_recognizer.detect(img, frame_id=frame_obj.frame_id)
-                for face in face_result.faces:
-                    if face.embedding is not None:
-                        match = face_matcher.match(face.embedding)
-                        if match:
-                            face_label = match.label
-                            face_sim = match.similarity
-                            break   # 最初にマッチした人物を採用
-
-            label_str = f" → {face_label} ({face_sim:.2f})" if face_label else " → 未登録"
-            cam_log.info(
-                f"[EVENT] {event.event_id} | type={event.detection_type} | "
-                f"frames={event.frame_count} | dur={event.duration_sec:.1f}s{label_str if 'person' in event.detection_type else ''}"
-            )
-
-            snapshot_path = file_store.save_snapshot(
-                img, event_id=event.event_id, prefix=cam_cfg.name
-            )
-            pre_frames = ring_buf.get_pre_frames(since=event.started_at)
-            collecting_post = True
-            post_collect_end = time.time() + cfg.storage.clip_post_seconds
-            post_frames = list(pre_frames)
-            active_event = event
-
-            # --- 車両分析 (vehicle が含まれるイベント) ---
-            vehicle_color = None
-            vehicle_type = None
-            vehicle_match_label = None
-            if "vehicle" in event.detection_type:
-                known_vehicles = event_store.get_all_vehicles()
-                for d in result.vehicles:
-                    from pipeline.detector import COCO_CLASSES
-                    vtype = COCO_CLASSES.get(d.class_id, "car")
-                    ana = vehicle_analyzer.analyze(img, d.bbox, vtype)
-                    vehicle_color = ana.color_name
-                    vehicle_type = ana.vehicle_type_jp
-                    match = vehicle_analyzer.match(ana, known_vehicles)
-                    if match:
-                        vehicle_match_label = match.label
-                        cam_log.info(
-                            f"  既知車両: {match.display_name} "
-                            f"({ana.color_name} {ana.vehicle_type_jp}  score={match.score:.2f})"
+                        # バックグラウンドスレッドで clip 処理開始
+                        t = threading.Thread(
+                            target=handle_clip,
+                            args=(trigger, cam_cfg, capture, clip_analyzer,
+                                  file_store, event_store, cfg, cam_log),
+                            daemon=True,
+                            name=f"{cam_cfg.name}-clip",
                         )
-                    else:
-                        cam_log.info(
-                            f"  車両: {ana.color_name} {ana.vehicle_type_jp} (未登録)"
-                        )
-                    break  # 最大の車両1台を代表として記録
+                        t.start()
+                except Exception as e:
+                    cam_log.warning(f"poll_events error: {e}")
 
-            event_store.save_event(event, snapshot_path=snapshot_path)
-            if face_label:
-                event_store.update_event_recognition(
-                    event.event_id,
-                    face_label=face_label,
-                    face_confidence=face_sim,
-                )
-                event_store.update_person_seen(face_label)
-            if vehicle_color or vehicle_type:
-                event_store.update_event_recognition(
-                    event.event_id,
-                    vehicle_color=vehicle_color,
-                    vehicle_type=vehicle_type,
-                )
-            if vehicle_match_label:
-                event_store.update_vehicle_seen(vehicle_match_label)
-            event_store.save_snapshot_record(
-                file_path=snapshot_path,
-                event_id=event.event_id,
-                snapshot_type="event",
-                width=img.shape[1],
-                height=img.shape[0],
-                file_size_bytes=Path(snapshot_path).stat().st_size,
-            )
+        # collecting 状態の確認 (handle_clip 完了待ち)
+        if collecting.is_set() and now >= cooldown_until:
+            collecting.clear()
 
-        if collecting_post:
-            post_frames.append((img, ts))
-            if time.time() >= post_collect_end:
-                collecting_post = False
-                clip_path = file_store.save_clip(
-                    post_frames, event_id=active_event.event_id,
-                    fps=capture.fps or 15,
-                )
-                if clip_path:
-                    cam_log.info(f"Clip saved: {clip_path}")
-                post_frames = []
-                active_event = None
-
-        if show_window:
-            display = detector.draw(img, result)
-            win_name = f"RemoteAICamera [{cam_cfg.name}]"
-            cv2.imshow(win_name, cv2.resize(display, (960, 540)))
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                stop_event.set()
-                break
-
-        time.sleep(0.01)
+        time.sleep(0.1)
 
     capture.stop()
     cam_log.info("Worker stopped")
@@ -218,10 +196,10 @@ def run(config_path: str = "config.yaml", show_window: bool = False):
     cfg = load_config(config_path)
     setup_logging()
     logger.bind(cam="main").info(
-        f"=== RemoteAICamera Phase 2 starting ({len(cfg.cameras)} camera(s)) ==="
+        f"=== RemoteAICamera (ONVIF-driven) starting ({len(cfg.cameras)} camera(s)) ==="
     )
 
-    # YOLOv8 / FaceRecognizer は全カメラで共有 (VRAM節約)
+    # YOLOv8 は全カメラで共有 (VRAM節約)
     detector = YOLODetector(
         model_name=cfg.detection.yolo_model,
         confidence=cfg.detection.confidence,
@@ -231,18 +209,6 @@ def run(config_path: str = "config.yaml", show_window: bool = False):
     )
     logger.bind(cam="main").info("Loading YOLOv8 model...")
     detector.load()
-
-    face_recognizer = FaceRecognizer(
-        device=cfg.detection.device,
-        models_dir=cfg.storage.base_dir + "/models",
-    )
-    logger.bind(cam="main").info("Loading FaceRecognizer...")
-    face_recognizer.load()
-
-    face_matcher = FaceMatcher(faces_dir=cfg.storage.faces_dir)
-    face_matcher.load()
-
-    vehicle_analyzer = VehicleAnalyzer()
 
     file_store = FileStore(
         snapshots_dir=cfg.storage.snapshots_dir,
@@ -268,8 +234,7 @@ def run(config_path: str = "config.yaml", show_window: bool = False):
     for cam_cfg in cfg.cameras:
         t = threading.Thread(
             target=camera_worker,
-            args=(cam_cfg, detector, face_recognizer, face_matcher,
-                  vehicle_analyzer, file_store, event_store, cfg, stop_event, show_window),
+            args=(cam_cfg, detector, file_store, event_store, cfg, stop_event),
             name=f"cam-{cam_cfg.name}",
             daemon=True,
         )
@@ -286,10 +251,6 @@ def run(config_path: str = "config.yaml", show_window: bool = False):
 
     for t in threads:
         t.join(timeout=15)
-
-    import cv2
-    if show_window:
-        cv2.destroyAllWindows()
 
     stats = event_store.summary()
     storage = file_store.check_storage()

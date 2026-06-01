@@ -25,7 +25,7 @@ class RTSPCapture:
     def __init__(
         self,
         rtsp_url: str,
-        buffer_seconds: int = 10,
+        buffer_seconds: int = 20,  # ONVIF駆動型: 15秒クリップ + 余裕
         fps_hint: int = 15,
         reconnect_interval: int = 5,
     ):

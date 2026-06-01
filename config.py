@@ -40,7 +40,8 @@ class StorageConfig:
     db_path: str = "data/events.db"
     snapshot_quality: int = 90
     clip_pre_seconds: float = 3.0
-    clip_post_seconds: float = 5.0
+    clip_post_seconds: float = 12.0     # ONVIF駆動: 3+12=15秒クリップ
+    clip_duration_sec: float = 15.0     # 総クリップ長 (pre + post)
     max_storage_gb: float = 50.0
 
 

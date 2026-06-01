@@ -43,8 +43,9 @@ storage:
   faces_dir: "data/faces"
   db_path: "data/events.db"
   snapshot_quality: 90
-  clip_pre_seconds: 3
-  clip_post_seconds: 5
+  clip_pre_seconds: 3           # ONVIF駆動型: プリロール 3秒
+  clip_post_seconds: 12         # ONVIF駆動型: ポストロール 12秒 (3+12=15秒クリップ)
+  clip_duration_sec: 15         # 総クリップ長
   max_storage_gb: 50
 
 lm_studio:
