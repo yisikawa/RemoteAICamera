@@ -2,12 +2,17 @@
 # cp config.yaml.example config.yaml
 
 cameras:
-  - name: "frontCamera"             # カメラ識別名 (ログ・ファイル名に使用)
-    host: "192.168.1.100"           # カメラの IP アドレス (discover.py で確認可)
-    username: "admin"               # カメラのユーザー名
-    password: "your_local_password" # Tapo API 用ローカルパスワード (カメラ設定画面で確認)
-    stream_password: ""             # RTSP ストリーム用パスワード (空なら password を流用)
-    cloud_password: ""              # Tapo クラウドアカウントのパスワード (KLAP認証が必要な場合)
+  - name: "frontCamera"
+    host: "192.168.1.100"
+
+    # Tapo API 認証 (pytapo / KLAP protocol 用)
+    api_username: "admin"                          # Tapo API 用ユーザー (通常は "admin")
+    api_password: "your_tplink_cloud_password"     # TP-Link ID のパスワード
+
+    # RTSP/ONVIF 認証 (ローカルカメラアカウント用)
+    stream_username: "your_stream_username"        # カメラアカウント (Tapo app で作成)
+    stream_password: "your_stream_password"        # カメラアカウント パスワード
+
     rtsp_stream: 1                  # 1=高画質, 2=低画質
     reconnect_interval: 5
     motion_poll_interval: 2
@@ -15,10 +20,10 @@ cameras:
   # カメラを追加する場合はこのブロックをコピーして追記
   # - name: "garageCamera"
   #   host: "192.168.1.101"
-  #   username: "admin"
-  #   password: "your_local_password"
-  #   stream_password: ""
-  #   cloud_password: ""
+  #   api_username: "admin"
+  #   api_password: "your_tplink_cloud_password"
+  #   stream_username: "your_stream_username"
+  #   stream_password: "your_stream_password"
   #   rtsp_stream: 1
   #   reconnect_interval: 5
   #   motion_poll_interval: 2

@@ -114,20 +114,19 @@ def camera_worker(
 ):
     cam_log = logger.bind(cam=cam_cfg.name)
 
-    # Tapo API 接続 (ONVIF イベント取得用)
+    # ONVIF 接続 (イベント取得用)
     tapo = TapoClient(
         host=cam_cfg.host,
-        username=cam_cfg.username,
-        password=cam_cfg.password,
-        cloud_password=cam_cfg.cloud_password,
-        rtsp_password=cam_cfg.rtsp_password,
+        api_username=cam_cfg.api_username,
+        api_password=cam_cfg.api_password,
+        onvif_port=cam_cfg.onvif_port,
     )
     if not tapo.connect():
         cam_log.warning("Tapo API unavailable — cannot poll ONVIF events")
         return
 
     # RTSP キャプチャ開始 (フレームバッファ保持)
-    rtsp_url = tapo.get_rtsp_url(cam_cfg.rtsp_stream)
+    rtsp_url = f"rtsp://{cam_cfg.stream_username}:{cam_cfg.stream_password}@{cam_cfg.host}:554/stream{cam_cfg.rtsp_stream}"
     capture = RTSPCapture(
         rtsp_url=rtsp_url,
         buffer_seconds=max(20, int(cfg.storage.clip_duration_sec) + 5),

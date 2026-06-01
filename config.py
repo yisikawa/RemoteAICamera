@@ -8,18 +8,38 @@ import yaml
 @dataclass
 class CameraConfig:
     host: str
-    username: str
-    password: str                    # Tapo API (pytapo) 用ローカル管理パスワード
     name: str = "cam"
-    stream_password: str = ""        # RTSP ストリーム用パスワード (空なら password を流用)
-    cloud_password: str = ""         # Tapo クラウドアカウントパスワード (KLAP認証が必要な場合)
+
+    # Tapo API 認証 (pytapo, KLAP protocol 用)
+    api_username: str = "admin"
+    api_password: str = ""           # TP-Link ID のパスワード
+
+    # RTSP/ONVIF 認証 (ローカルカメラアカウント用)
+    stream_username: str = "admin"
+    stream_password: str = ""
+
     rtsp_stream: int = 1
+    onvif_port: int = 2020            # ONVIF ポート (Tapo C520WS: 2020)
     reconnect_interval: int = 5
     motion_poll_interval: int = 2
 
+    # 旧形式との後方互換性
+    username: str = ""               # 廃止予定: stream_username を使用
+    password: str = ""               # 廃止予定: stream_password を使用
+    cloud_password: str = ""         # 廃止予定: api_password を使用
+
+    def __post_init__(self):
+        """旧形式 (username/password/cloud_password) から新形式に自動変換"""
+        if self.username and not self.stream_username:
+            self.stream_username = self.username
+        if self.password and not self.stream_password:
+            self.stream_password = self.password
+        if self.cloud_password and not self.api_password:
+            self.api_password = self.cloud_password
+
     @property
     def rtsp_password(self) -> str:
-        return self.stream_password if self.stream_password else self.password
+        return self.stream_password if self.stream_password else ""
 
 
 @dataclass
