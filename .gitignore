@@ -27,3 +27,6 @@ __pycache__/
 # Windows
 Thumbs.db
 Desktop.ini
+
+# 設計ドキュメント (ローカル保管)
+doc/
