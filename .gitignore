@@ -1,0 +1,29 @@
+# 仮想環境
+.venv/
+
+# 設定ファイル (パスワード含む — config.yaml.example を参照)
+config.yaml
+
+# データ・ログ
+data/
+
+# Python キャッシュ
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# YOLOv8 モデル (大容量バイナリ)
+*.pt
+*.onnx
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# Windows
+Thumbs.db
+Desktop.ini

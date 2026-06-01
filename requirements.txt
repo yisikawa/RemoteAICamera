@@ -1,0 +1,28 @@
+# カメラ連携
+pytapo==3.3.15
+
+# 映像取得・画像処理
+opencv-python==4.10.0.84
+numpy==1.26.4
+
+# 物体検出 (YOLOv8) - CUDAは別途 torch インストール必要
+ultralytics==8.3.0
+
+# データベース
+SQLAlchemy==2.0.36
+alembic==1.14.0
+
+# 設定ファイル読み込み
+PyYAML==6.0.2
+
+# LM Studio クライアント (OpenAI互換)
+openai==1.54.0
+
+# ユーティリティ
+python-dateutil==2.9.0
+Pillow==10.4.0
+tqdm==4.67.0
+loguru==0.7.2
+
+# 開発用
+ipython==8.29.0

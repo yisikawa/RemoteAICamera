@@ -1,0 +1,57 @@
+# config.yaml.example — このファイルを config.yaml にコピーして編集してください
+# cp config.yaml.example config.yaml
+
+cameras:
+  - name: "frontCamera"             # カメラ識別名 (ログ・ファイル名に使用)
+    host: "192.168.1.100"           # カメラの IP アドレス (discover.py で確認可)
+    username: "admin"               # カメラのユーザー名
+    password: "your_local_password" # Tapo API 用ローカルパスワード (カメラ設定画面で確認)
+    stream_password: ""             # RTSP ストリーム用パスワード (空なら password を流用)
+    cloud_password: ""              # Tapo クラウドアカウントのパスワード (KLAP認証が必要な場合)
+    rtsp_stream: 1                  # 1=高画質, 2=低画質
+    reconnect_interval: 5
+    motion_poll_interval: 2
+
+  # カメラを追加する場合はこのブロックをコピーして追記
+  # - name: "garageCamera"
+  #   host: "192.168.1.101"
+  #   username: "admin"
+  #   password: "your_local_password"
+  #   stream_password: ""
+  #   cloud_password: ""
+  #   rtsp_stream: 1
+  #   reconnect_interval: 5
+  #   motion_poll_interval: 2
+
+detection:
+  yolo_model: "yolov8s.pt"         # n/s/m/l/x から選択 (s推奨)
+  confidence: 0.5
+  target_classes:
+    - 0    # person
+    - 2    # car
+    - 3    # motorcycle
+    - 5    # bus
+    - 7    # truck
+  device: "cuda"                   # cuda / cpu
+  frame_skip: 2
+
+storage:
+  base_dir: "data"
+  snapshots_dir: "data/snapshots"
+  clips_dir: "data/clips"
+  faces_dir: "data/faces"
+  db_path: "data/events.db"
+  snapshot_quality: 90
+  clip_pre_seconds: 3
+  clip_post_seconds: 5
+  max_storage_gb: 50
+
+lm_studio:
+  base_url: "http://localhost:1234/v1"
+  vision_model: "qwen2-vl-7b"
+  chat_model: "qwen2.5-7b"
+  timeout: 30
+
+logging:
+  level: "INFO"                    # DEBUG / INFO / WARNING / ERROR
+  file: "data/app.log"

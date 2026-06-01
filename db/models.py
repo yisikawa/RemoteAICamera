@@ -1,0 +1,90 @@
+"""SQLAlchemy ORM モデル定義"""
+from datetime import datetime
+from sqlalchemy import (
+    Column, Integer, Float, String, DateTime,
+    ForeignKey, JSON, Boolean, Text, Index,
+)
+from sqlalchemy.orm import DeclarativeBase, relationship
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class DetectionEventRecord(Base):
+    """検出イベントログ (1通過 = 1レコード)"""
+    __tablename__ = "detection_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(String(64), unique=True, nullable=False, index=True)
+    started_at = Column(DateTime, nullable=False, index=True)
+    ended_at = Column(DateTime, nullable=False)
+    duration_sec = Column(Float)
+    detection_type = Column(String(32))        # person / vehicle / person+vehicle
+    frame_count = Column(Integer)
+
+    # 認識結果 (Phase 2 以降で埋まる)
+    face_label = Column(String(128))           # 顔認識ラベル (登録名)
+    face_confidence = Column(Float)
+    plate_number = Column(String(32))          # ナンバープレート
+    plate_confidence = Column(Float)
+    vehicle_color = Column(String(32))
+    vehicle_type = Column(String(32))
+    ai_description = Column(Text)             # LM Studio による状況説明
+
+    # ファイルパス
+    snapshot_path = Column(String(512))
+    clip_path = Column(String(512))
+
+    detections_json = Column(JSON)            # 検出ボックス生データ
+
+    __table_args__ = (
+        Index("ix_events_started_type", "started_at", "detection_type"),
+    )
+
+
+class KnownPerson(Base):
+    """登録済み人物マスター"""
+    __tablename__ = "known_persons"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    label = Column(String(128), unique=True, nullable=False)
+    display_name = Column(String(256))
+    encoding_path = Column(String(512))       # face encoding numpy ファイルパス
+    thumbnail_path = Column(String(512))
+    note = Column(Text)
+    registered_at = Column(DateTime, default=datetime.now)
+    last_seen_at = Column(DateTime)
+    visit_count = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+
+
+class KnownVehicle(Base):
+    """登録済み車両マスター"""
+    __tablename__ = "known_vehicles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    plate_number = Column(String(32), unique=True, nullable=False)
+    owner_label = Column(String(128))         # KnownPerson.label との対応
+    vehicle_color = Column(String(32))
+    vehicle_type = Column(String(32))
+    note = Column(Text)
+    registered_at = Column(DateTime, default=datetime.now)
+    last_seen_at = Column(DateTime)
+    visit_count = Column(Integer, default=0)
+    thumbnail_path = Column(String(512))
+    is_active = Column(Boolean, default=True)
+
+
+class Snapshot(Base):
+    """静止画ファイル管理"""
+    __tablename__ = "snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(String(64), index=True)
+    file_path = Column(String(512), nullable=False)
+    taken_at = Column(DateTime, nullable=False, default=datetime.now)
+    snapshot_type = Column(String(32))        # "event" / "periodic" / "manual"
+    width = Column(Integer)
+    height = Column(Integer)
+    file_size_bytes = Column(Integer)
