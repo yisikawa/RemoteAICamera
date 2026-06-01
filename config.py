@@ -47,8 +47,7 @@ class StorageConfig:
 @dataclass
 class LMStudioConfig:
     base_url: str = "http://localhost:1234/v1"
-    vision_model: str = "qwen2-vl-7b"
-    chat_model: str = "qwen2.5-7b"
+    model: str = "qwen2.5-vl-7b-instruct-q4_k_m"   # ビジョン+チャット兼用
     timeout: int = 30
 
 
@@ -73,11 +72,15 @@ def load_config(path: str = "config.yaml") -> AppConfig:
 
     det = raw.get("detection", {})
     sto = raw.get("storage", {})
-    lms = raw.get("lm_studio", {})
+    lms_raw = raw.get("lm_studio", {})
+    # 旧キー (vision_model/chat_model) との後方互換
+    lms = {k: v for k, v in lms_raw.items() if k not in ("vision_model", "chat_model")}
+    if "vision_model" in lms_raw and "model" not in lms:
+        lms["model"] = lms_raw["vision_model"]
 
     return AppConfig(
         cameras=cameras,
         detection=DetectionConfig(**det),
         storage=StorageConfig(**sto),
-        lm_studio=LMStudioConfig(**lms),
+        lm_studio=LMStudioConfig(**lms) if lms else LMStudioConfig(),
     )
