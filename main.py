@@ -57,8 +57,11 @@ def handle_clip(
             cam_log.warning(f"[{event_id}] Not enough frames: {len(frames) if frames else 0}")
             return
 
+        # Frame オブジェクト → (ndarray, timestamp) タプルに変換
+        frames_as_list = [(f.data, f.timestamp) for f in frames]
+
         # 分析 (every 5th frame に YOLO推論)
-        result = clip_analyzer.analyze(frames, event_id=event_id, frame_interval=5)
+        result = clip_analyzer.analyze(frames_as_list, event_id=event_id, frame_interval=5)
         if not result:
             cam_log.warning(f"[{event_id}] Analysis failed")
             return
@@ -68,8 +71,7 @@ def handle_clip(
             result.best_frame, event_id=event_id, prefix=cam_cfg.name
         )
 
-        # クリップ保存 (フレーム list をタプルに変換)
-        frames_as_list = [(img, ts) for img, ts in frames]
+        # クリップ保存
         clip_path = file_store.save_clip(
             frames_as_list, event_id=event_id, fps=capture.fps or 15
         )

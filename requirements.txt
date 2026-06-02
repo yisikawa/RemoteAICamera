@@ -20,4 +20,9 @@ Pillow==10.4.0
 tqdm==4.67.0
 loguru==0.7.2
 
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.12
+websockets>=13.0
+
 ipython==8.29.0

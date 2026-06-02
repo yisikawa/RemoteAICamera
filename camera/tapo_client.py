@@ -28,6 +28,8 @@ class TapoClient:
         self.onvif_port = onvif_port
         self._cam: Optional[ONVIFCamera] = None
         self._events_service = None
+        self._pullpoint_service = None
+        self._subscription_ref = None
         self._connected = False
 
     def connect(self) -> bool:
@@ -51,7 +53,16 @@ class TapoClient:
             model = getattr(device_info, "Model", "unknown")
 
             # イベントサービス準備
-            self._events_service = self._cam.create_pullpoint_subscription_service()
+            self._events_service = self._cam.create_events_service()
+
+            # CreatePullPointSubscription でサブスクリプション作成
+            sub_resp = self._events_service.CreatePullPointSubscription(
+                {"InitialTerminationTime": "PT10M"}
+            )
+            self._subscription_ref = sub_resp.SubscriptionReference
+
+            # PullPoint service 取得
+            self._pullpoint_service = self._cam.create_pullpoint_service()
 
             logger.info(
                 f"ONVIF connected: {self.host}:{self.onvif_port} (model={model})"
@@ -69,6 +80,8 @@ class TapoClient:
     def disconnect(self):
         self._cam = None
         self._events_service = None
+        self._pullpoint_service = None
+        self._subscription_ref = None
         self._connected = False
 
     @property
@@ -86,13 +99,13 @@ class TapoClient:
         PullPoint Subscription で ONVIF イベント取得。
         最大 1 秒待機、最大 10 件までの最新イベントを返す。
         """
-        if not self.is_connected:
+        if not self.is_connected or not self._pullpoint_service:
             return []
 
         events = []
         try:
             # PullMessages: Timeout='PT1S' (1秒), MessageLimit=10
-            msgs = self._events_service.PullMessages(
+            msgs = self._pullpoint_service.PullMessages(
                 {"MessageLimit": 10, "Timeout": "PT1S"}
             )
 

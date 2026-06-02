@@ -232,3 +232,68 @@ class EventStore:
             "vehicle_events": vehicles,
             "snapshots": snapshots,
         }
+
+    # ------------------------------------------------------------------ #
+    # API用クエリ (Phase 4 ダッシュボード)                                  #
+    # ------------------------------------------------------------------ #
+
+    def get_event_by_id(self, event_id: str) -> Optional[DetectionEventRecord]:
+        """単体イベント取得"""
+        with self._session() as s:
+            row = s.query(DetectionEventRecord).filter_by(event_id=event_id).first()
+            if row:
+                s.expunge(row)
+            return row
+
+    def get_events_filtered(
+        self,
+        detection_type: Optional[str] = None,
+        from_dt: Optional[datetime] = None,
+        to_dt: Optional[datetime] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[DetectionEventRecord], int]:
+        """フィルタ付きイベント一覧 + 総件数"""
+        with self._session() as s:
+            q = s.query(DetectionEventRecord)
+
+            if detection_type:
+                q = q.filter(DetectionEventRecord.detection_type.like(f"%{detection_type}%"))
+
+            if from_dt:
+                q = q.filter(DetectionEventRecord.started_at >= from_dt)
+
+            if to_dt:
+                q = q.filter(DetectionEventRecord.started_at <= to_dt)
+
+            total = q.count()
+            rows = (
+                q.order_by(desc(DetectionEventRecord.started_at))
+                .offset(offset)
+                .limit(limit)
+                .all()
+            )
+            s.expunge_all()
+            return rows, total
+
+    def get_all_persons(self, active_only: bool = True) -> list[KnownPerson]:
+        """人物マスタ一覧"""
+        with self._session() as s:
+            q = s.query(KnownPerson)
+            if active_only:
+                q = q.filter_by(is_active=True)
+            rows = q.all()
+            s.expunge_all()
+            return rows
+
+    def get_snapshots_by_event(self, event_id: str) -> list[Snapshot]:
+        """イベント紐づけスナップショット一覧"""
+        with self._session() as s:
+            rows = (
+                s.query(Snapshot)
+                .filter_by(event_id=event_id)
+                .order_by(Snapshot.taken_at)
+                .all()
+            )
+            s.expunge_all()
+            return rows
