@@ -2,7 +2,7 @@
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from api.deps import get_event_store
@@ -129,6 +129,15 @@ def get_event(event_id: str, store: EventStore = Depends(get_event_store)):
     if not record:
         raise HTTPException(status_code=404, detail="Event not found")
     return _event_to_response(record)
+
+
+@router.delete("/{event_id}", status_code=204)
+def delete_event(event_id: str, store: EventStore = Depends(get_event_store)):
+    """イベントとファイルを削除する"""
+    deleted = store.delete_event(event_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return Response(status_code=204)
 
 
 @router.get("/{event_id}/snapshots", response_model=list[SnapshotResponse])

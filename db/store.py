@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from contextlib import contextmanager
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 from sqlalchemy import create_engine, desc
 from sqlalchemy.orm import sessionmaker, Session
@@ -46,6 +47,7 @@ class EventStore:
         ended_at: Optional[float] = None,
         detection_type: Optional[str] = None,
         frame_count: int = 0,
+        detections_json: Optional[list] = None,
     ) -> DetectionEventRecord:
         """
         イベント記録。
@@ -80,11 +82,11 @@ class EventStore:
                 started_at=datetime.fromtimestamp(started_at) if started_at else datetime.now(),
                 ended_at=datetime.fromtimestamp(ended_at) if ended_at else datetime.now(),
                 duration_sec=round((ended_at or started_at or 0) - (started_at or 0), 2),
-                detection_type=detection_type or "motion",
+                detection_type=detection_type or "other",
                 frame_count=frame_count,
                 snapshot_path=snapshot_path,
                 clip_path=clip_path,
-                detections_json=[],
+                detections_json=detections_json or [],
             )
             event_id_log = event_id or "unknown"
 
@@ -97,6 +99,27 @@ class EventStore:
             s.add(record)
         logger.debug(f"Event saved: {event_id_log} ({detection_type or 'motion'})")
         return record
+
+    def delete_event(self, event_id: str) -> bool:
+        """イベントレコード・紐づくSnapshotレコード・ファイルを削除する"""
+        with self._session() as s:
+            record = s.query(DetectionEventRecord).filter_by(event_id=event_id).first()
+            if not record:
+                return False
+
+            # ファイル削除
+            for path_str in (record.snapshot_path, record.clip_path):
+                if path_str:
+                    p = Path(path_str)
+                    if p.exists():
+                        p.unlink()
+
+            # Snapshot レコード削除
+            s.query(Snapshot).filter_by(event_id=event_id).delete()
+
+            s.delete(record)
+        logger.info(f"Event deleted: {event_id}")
+        return True
 
     def update_event_recognition(
         self,
@@ -222,20 +245,20 @@ class EventStore:
     # ------------------------------------------------------------------ #
 
     def summary(self) -> dict:
+        categories = ["person", "car", "motorcycle", "bicycle", "pet", "other"]
         with self._session() as s:
             total = s.query(DetectionEventRecord).count()
-            persons = s.query(DetectionEventRecord).filter(
-                DetectionEventRecord.detection_type.contains("person")
-            ).count()
-            vehicles = s.query(DetectionEventRecord).filter(
-                DetectionEventRecord.detection_type.contains("vehicle")
-            ).count()
             snapshots = s.query(Snapshot).count()
+            counts = {
+                cat: s.query(DetectionEventRecord).filter(
+                    DetectionEventRecord.detection_type == cat
+                ).count()
+                for cat in categories
+            }
         return {
             "total_events": total,
-            "person_events": persons,
-            "vehicle_events": vehicles,
             "snapshots": snapshots,
+            **counts,
         }
 
     # ------------------------------------------------------------------ #

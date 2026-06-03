@@ -4,9 +4,68 @@ import type { Summary, DetectionEvent } from './types'
 import './index.css'
 
 const TYPE_COLOR: Record<string, string> = {
-  person:  'bg-green-600',
-  vehicle: 'bg-blue-600',
-  motion:  'bg-gray-500',
+  person:     'bg-emerald-500',
+  car:        'bg-sky-500',
+  motorcycle: 'bg-orange-400',
+  bicycle:    'bg-yellow-400',
+  pet:        'bg-violet-500',
+  other:      'bg-slate-500',
+  vehicle:    'bg-sky-500',
+  motion:     'bg-slate-500',
+}
+
+const TYPE_LABEL: Record<string, string> = {
+  person:     '人',
+  car:        '車',
+  motorcycle: 'バイク',
+  bicycle:    '自転車',
+  pet:        'ペット',
+  other:      'その他',
+  vehicle:    '車両',
+  motion:     '動体',
+}
+
+function ConfirmModal({
+  eventId,
+  onConfirm,
+  onCancel,
+  loading,
+}: {
+  eventId: string
+  onConfirm: () => void
+  onCancel: () => void
+  loading: boolean
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl p-6 w-80">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-9 h-9 rounded-full bg-red-500/20 flex items-center justify-center text-red-400 text-lg">✕</div>
+          <h3 className="text-white font-semibold text-base">イベントを削除</h3>
+        </div>
+        <p className="text-slate-300 text-sm mb-1">以下のイベントを完全に削除します。</p>
+        <p className="text-slate-400 text-xs font-mono bg-slate-900 rounded px-2 py-1 mb-5 break-all">{eventId}</p>
+        <p className="text-slate-400 text-xs mb-5">スナップショット・クリップ動画も削除されます。この操作は取り消せません。</p>
+        <div className="flex gap-3 justify-end">
+          <button
+            onClick={onCancel}
+            disabled={loading}
+            className="px-4 py-2 text-sm rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 transition disabled:opacity-50"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={loading}
+            className="px-4 py-2 text-sm rounded-lg bg-red-600 hover:bg-red-500 text-white font-semibold transition disabled:opacity-50 flex items-center gap-2"
+          >
+            {loading && <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
+            削除する
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function EventList({
@@ -21,33 +80,33 @@ function EventList({
   onSelect: (e: DetectionEvent) => void
 }) {
   return (
-    <div className="bg-slate-700 rounded-lg p-4 text-white">
-      <h2 className="text-lg font-bold mb-3">{cameraName}</h2>
-      <div className="space-y-2 overflow-y-auto" style={{ maxHeight: '220px' }}>
+    <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 text-white">
+      <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3">{cameraName}</h2>
+      <div className="space-y-1 overflow-y-auto" style={{ maxHeight: '220px' }}>
         {events.length === 0 ? (
-          <p className="text-gray-400 text-sm">No events yet</p>
+          <p className="text-slate-500 text-sm py-2">イベントなし</p>
         ) : (
           events.map(event => (
             <div
               key={event.event_id}
               onClick={() => onSelect(event)}
-              className={`p-3 rounded cursor-pointer transition ${
+              className={`px-3 py-2.5 rounded-lg cursor-pointer transition-colors ${
                 event.event_id === selectedId
-                  ? 'bg-slate-400'
-                  : 'bg-slate-600 hover:bg-slate-500'
+                  ? 'bg-slate-600 ring-1 ring-slate-400'
+                  : 'hover:bg-slate-700'
               }`}
             >
-              <div className="flex justify-between items-start">
-                <div>
-                  <div className="font-semibold text-sm">{event.event_id}</div>
-                  <div className="text-xs text-gray-300">
+              <div className="flex justify-between items-center gap-2">
+                <div className="min-w-0">
+                  <div className="text-xs text-slate-300 truncate">{event.event_id}</div>
+                  <div className="text-xs text-slate-500 mt-0.5">
                     {new Date(event.started_at).toLocaleString('ja-JP')}
                   </div>
                 </div>
-                <span className={`text-xs font-bold px-2 py-1 rounded ${
-                  TYPE_COLOR[event.detection_type] ?? 'bg-gray-500'
+                <span className={`shrink-0 text-xs font-bold px-2 py-0.5 rounded-full text-white ${
+                  TYPE_COLOR[event.detection_type] ?? 'bg-slate-500'
                 }`}>
-                  {event.detection_type}
+                  {TYPE_LABEL[event.detection_type] ?? event.detection_type}
                 </span>
               </div>
             </div>
@@ -58,19 +117,41 @@ function EventList({
   )
 }
 
+function FilterCard({
+  label, value, color, active, onClick,
+}: {
+  label: string; value: number; color: string; active: boolean; onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-xl text-white text-left transition-all overflow-hidden ${color} hover:brightness-110`}
+    >
+      <div className="px-4 pt-4 pb-3">
+        <div className="text-2xl font-bold">{value}</div>
+        <div className="text-xs font-medium opacity-80 mt-0.5">{label}</div>
+      </div>
+      <div className={`h-1 transition-all ${active ? 'bg-white' : 'bg-transparent'}`} />
+    </button>
+  )
+}
+
 function App() {
   const [summary, setSummary] = useState<Summary | null>(null)
   const [events, setEvents] = useState<DetectionEvent[]>([])
   const [selectedEvent, setSelectedEvent] = useState<DetectionEvent | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [confirmTarget, setConfirmTarget] = useState<DetectionEvent | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [activeFilter, setActiveFilter] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         const [summaryData, eventsData] = await Promise.all([
           eventApi.getSummary(),
-          eventApi.listEvents(100, 0),
+          eventApi.listEvents(500, 0),
         ])
         setSummary(summaryData)
         setEvents(eventsData.items)
@@ -83,43 +164,98 @@ function App() {
     fetchData()
   }, [])
 
-  if (loading) return <div className="p-8 text-center text-white">Loading...</div>
-  if (error)   return <div className="p-8 text-red-500">Error: {error}</div>
+  const handleDeleteConfirm = async () => {
+    if (!confirmTarget) return
+    setDeleting(true)
+    try {
+      await eventApi.deleteEvent(confirmTarget.event_id)
+      setEvents(prev => prev.filter(e => e.event_id !== confirmTarget.event_id))
+      setSelectedEvent(null)
+      setConfirmTarget(null)
+    } catch {
+      setConfirmTarget(null)
+    } finally {
+      setDeleting(false)
+    }
+  }
 
-  const cameras = Array.from(new Set(events.map(e => e.event_id.split('_')[0]))).sort()
-  const byCamera = (name: string) => events.filter(e => e.event_id.startsWith(name + '_'))
+  if (loading) return (
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center text-slate-400">
+      読み込み中...
+    </div>
+  )
+  if (error) return (
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center text-red-400">
+      エラー: {error}
+    </div>
+  )
+
+  const filteredEvents = activeFilter
+    ? events.filter(e => e.detection_type === activeFilter)
+    : events
+
+  const cameras = Array.from(new Set(filteredEvents.map(e => e.event_id.split('_')[0]))).sort()
+  const byCamera = (name: string) => filteredEvents.filter(e => e.event_id.startsWith(name + '_'))
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 p-8">
-      <div className="max-w-7xl mx-auto">
-        <h1 className="text-4xl font-bold text-white mb-8">RemoteAICamera Dashboard</h1>
+    <div className="min-h-screen bg-slate-900 p-6">
+      {confirmTarget && (
+        <ConfirmModal
+          eventId={confirmTarget.event_id}
+          onConfirm={handleDeleteConfirm}
+          onCancel={() => setConfirmTarget(null)}
+          loading={deleting}
+        />
+      )}
 
-        {/* Stats */}
+      <div className="max-w-7xl mx-auto">
+        <div className="flex items-baseline gap-3 mb-6">
+          <h1 className="text-2xl font-bold text-white tracking-tight">RemoteAICamera</h1>
+          <span className="text-xs text-red-400">最新 500 件表示</span>
+        </div>
+
         {summary && (
-          <div className="grid grid-cols-4 gap-4 mb-8">
-            <div className="bg-blue-600 rounded-lg p-4 text-white">
-              <div className="text-sm opacity-90">Total Events</div>
-              <div className="text-3xl font-bold">{summary.total_events}</div>
-            </div>
-            <div className="bg-green-600 rounded-lg p-4 text-white">
-              <div className="text-sm opacity-90">Person Events</div>
-              <div className="text-3xl font-bold">{summary.person_events}</div>
-            </div>
-            <div className="bg-purple-600 rounded-lg p-4 text-white">
-              <div className="text-sm opacity-90">Vehicle Events</div>
-              <div className="text-3xl font-bold">{summary.vehicle_events}</div>
-            </div>
-            <div className="bg-orange-600 rounded-lg p-4 text-white">
-              <div className="text-sm opacity-90">Snapshots</div>
-              <div className="text-3xl font-bold">{summary.snapshots}</div>
-            </div>
+          <div className="grid grid-cols-7 gap-2 mb-6">
+            <FilterCard
+              label="すべて" value={summary.total_events} color="bg-slate-700"
+              active={activeFilter === null}
+              onClick={() => setActiveFilter(null)}
+            />
+            <FilterCard
+              label="人" value={summary.person ?? 0} color="bg-emerald-700"
+              active={activeFilter === 'person'}
+              onClick={() => setActiveFilter(activeFilter === 'person' ? null : 'person')}
+            />
+            <FilterCard
+              label="車" value={summary.car ?? 0} color="bg-sky-700"
+              active={activeFilter === 'car'}
+              onClick={() => setActiveFilter(activeFilter === 'car' ? null : 'car')}
+            />
+            <FilterCard
+              label="バイク" value={summary.motorcycle ?? 0} color="bg-orange-700"
+              active={activeFilter === 'motorcycle'}
+              onClick={() => setActiveFilter(activeFilter === 'motorcycle' ? null : 'motorcycle')}
+            />
+            <FilterCard
+              label="自転車" value={summary.bicycle ?? 0} color="bg-yellow-700"
+              active={activeFilter === 'bicycle'}
+              onClick={() => setActiveFilter(activeFilter === 'bicycle' ? null : 'bicycle')}
+            />
+            <FilterCard
+              label="ペット" value={summary.pet ?? 0} color="bg-violet-700"
+              active={activeFilter === 'pet'}
+              onClick={() => setActiveFilter(activeFilter === 'pet' ? null : 'pet')}
+            />
+            <FilterCard
+              label="その他" value={summary.other ?? 0} color="bg-slate-600"
+              active={activeFilter === 'other'}
+              onClick={() => setActiveFilter(activeFilter === 'other' ? null : 'other')}
+            />
           </div>
         )}
 
-        {/* Main: カメラ別リスト(左) + Details(右) */}
-        <div className="grid grid-cols-3 gap-8">
-          {/* カメラごとに縦2段 */}
-          <div className="col-span-2 flex flex-col gap-4">
+        <div className="grid grid-cols-3 gap-5">
+          <div className="col-span-2 flex flex-col gap-3">
             {cameras.map(name => (
               <EventList
                 key={name}
@@ -131,51 +267,68 @@ function App() {
             ))}
           </div>
 
-          {/* Detail Panel */}
-          <div className="bg-slate-700 rounded-lg p-6 text-white flex flex-col h-full">
-            <h2 className="text-2xl font-bold mb-4">Details</h2>
+          <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 text-white flex flex-col">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Details</h2>
+              {selectedEvent && (
+                <button
+                  onClick={() => setConfirmTarget(selectedEvent)}
+                  className="text-xs text-red-400 hover:text-red-300 border border-red-800 hover:border-red-600 px-2.5 py-1 rounded-lg transition"
+                >
+                  削除
+                </button>
+              )}
+            </div>
+
             {selectedEvent ? (
-              <div className="space-y-4 text-sm overflow-y-auto flex-1">
+              <div className="space-y-3 text-sm overflow-y-auto flex-1">
                 {selectedEvent.clip_url ? (
                   <video
                     key={selectedEvent.clip_url}
                     src={selectedEvent.clip_url}
                     poster={selectedEvent.snapshot_url ?? undefined}
                     controls
-                    className="w-full rounded"
+                    className="w-full rounded-lg"
                   />
-                ) : selectedEvent.snapshot_url && (
-                  <img src={selectedEvent.snapshot_url} alt="snapshot" className="w-full rounded" />
-                )}
-                <div>
-                  <div className="text-gray-400">Event ID</div>
-                  <div className="font-mono text-xs break-all">{selectedEvent.event_id}</div>
-                </div>
-                <div>
-                  <div className="text-gray-400">Type</div>
-                  <div>{selectedEvent.detection_type}</div>
-                </div>
-                <div>
-                  <div className="text-gray-400">Time</div>
-                  <div>{new Date(selectedEvent.started_at).toLocaleString('ja-JP')}</div>
-                </div>
-                <div>
-                  <div className="text-gray-400">Duration</div>
-                  <div>{selectedEvent.duration_sec?.toFixed(1) ?? 'N/A'} sec</div>
-                </div>
-                <div>
-                  <div className="text-gray-400">Frames</div>
-                  <div>{selectedEvent.frame_count ?? 'N/A'}</div>
-                </div>
-                {selectedEvent.face_label && (
-                  <div>
-                    <div className="text-gray-400">Face</div>
-                    <div>{selectedEvent.face_label} ({selectedEvent.face_confidence?.toFixed(2)})</div>
+                ) : selectedEvent.snapshot_url ? (
+                  <img src={selectedEvent.snapshot_url} alt="snapshot" className="w-full rounded-lg" />
+                ) : null}
+
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <div className="col-span-2 bg-slate-900 rounded-lg px-3 py-2">
+                    <div className="text-xs text-slate-500 mb-0.5">Event ID</div>
+                    <div className="font-mono text-xs text-slate-300 break-all">{selectedEvent.event_id}</div>
                   </div>
-                )}
+                  <div className="bg-slate-900 rounded-lg px-3 py-2">
+                    <div className="text-xs text-slate-500 mb-0.5">種別</div>
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full text-white ${TYPE_COLOR[selectedEvent.detection_type] ?? 'bg-slate-500'}`}>
+                      {TYPE_LABEL[selectedEvent.detection_type] ?? selectedEvent.detection_type}
+                    </span>
+                  </div>
+                  <div className="bg-slate-900 rounded-lg px-3 py-2">
+                    <div className="text-xs text-slate-500 mb-0.5">時刻</div>
+                    <div className="text-xs text-slate-300">{new Date(selectedEvent.started_at).toLocaleString('ja-JP')}</div>
+                  </div>
+                  <div className="bg-slate-900 rounded-lg px-3 py-2">
+                    <div className="text-xs text-slate-500 mb-0.5">長さ</div>
+                    <div className="text-xs text-slate-300">{selectedEvent.duration_sec?.toFixed(1) ?? '—'} 秒</div>
+                  </div>
+                  <div className="bg-slate-900 rounded-lg px-3 py-2">
+                    <div className="text-xs text-slate-500 mb-0.5">フレーム数</div>
+                    <div className="text-xs text-slate-300">{selectedEvent.frame_count ?? '—'}</div>
+                  </div>
+                  {selectedEvent.face_label && (
+                    <div className="col-span-2 bg-slate-900 rounded-lg px-3 py-2">
+                      <div className="text-xs text-slate-500 mb-0.5">顔認識</div>
+                      <div className="text-xs text-slate-300">{selectedEvent.face_label} ({selectedEvent.face_confidence?.toFixed(2)})</div>
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
-              <p className="text-gray-400">Select an event to view details</p>
+              <div className="flex-1 flex items-center justify-center text-slate-600 text-sm">
+                イベントを選択してください
+              </div>
             )}
           </div>
         </div>

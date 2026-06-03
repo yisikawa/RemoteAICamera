@@ -23,4 +23,8 @@ export const eventApi = {
     const res = await api.get('/api/stats/summary');
     return res.data;
   },
+
+  deleteEvent: async (eventId: string): Promise<void> => {
+    await api.delete(`/api/events/${eventId}`);
+  },
 };

@@ -23,7 +23,11 @@ export interface EventsListResponse {
 
 export interface Summary {
   total_events: number;
-  person_events: number;
-  vehicle_events: number;
   snapshots: number;
+  person: number;
+  car: number;
+  motorcycle: number;
+  bicycle: number;
+  pet: number;
+  other: number;
 }

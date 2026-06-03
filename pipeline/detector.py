@@ -8,15 +8,41 @@ import numpy as np
 from loguru import logger
 
 
-# YOLOv8 対象クラス (COCO)
-COCO_CLASSES = {
-    0: "person",
-    1: "bicycle",
-    2: "car",
-    3: "motorcycle",
-    5: "bus",
-    7: "truck",
+# COCO 80クラス全名称
+COCO_CLASSES: dict[int, str] = {i: name for i, name in enumerate([
+    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train",
+    "truck", "boat", "traffic light", "fire hydrant", "stop sign",
+    "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep",
+    "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella",
+    "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard",
+    "sports ball", "kite", "baseball bat", "baseball glove", "skateboard",
+    "surfboard", "tennis racket", "bottle", "wine glass", "cup", "fork",
+    "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
+    "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair",
+    "couch", "potted plant", "bed", "dining table", "toilet", "tv",
+    "laptop", "mouse", "remote", "keyboard", "cell phone", "microwave",
+    "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase",
+    "scissors", "teddy bear", "hair drier", "toothbrush",
+])}
+
+# COCO class_id → detection_type カテゴリマッピング
+CATEGORY_MAP: dict[int, str] = {
+    0:  "person",
+    1:  "bicycle",
+    2:  "car",
+    3:  "motorcycle",
+    5:  "car",        # bus
+    7:  "car",        # truck
+    15: "pet",        # cat
+    16: "pet",        # dog
+    17: "pet",        # horse
+    18: "pet",        # sheep
+    19: "pet",        # cow
+    20: "pet",        # elephant
+    21: "pet",        # bear
+    23: "pet",        # giraffe
 }
+# 上記以外は "other"
 
 
 @dataclass
@@ -26,6 +52,10 @@ class Detection:
     confidence: float
     bbox: tuple[int, int, int, int]   # x1, y1, x2, y2
     timestamp: float = field(default_factory=time.time)
+
+    @property
+    def category(self) -> str:
+        return CATEGORY_MAP.get(self.class_id, "other")
 
     @property
     def is_person(self) -> bool:
@@ -108,7 +138,7 @@ class YOLODetector:
             frame,
             device=self.device,
             conf=self.confidence,
-            classes=self.target_classes,
+            classes=self.target_classes if self.target_classes else None,
             verbose=False,
         )
         elapsed_ms = (time.perf_counter() - t0) * 1000

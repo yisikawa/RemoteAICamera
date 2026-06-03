@@ -89,6 +89,16 @@ def handle_clip(
             frame_count=result.frame_count,
             snapshot_path=snapshot_path,
             clip_path=clip_path,
+            detections_json=[
+                {
+                    "class_id": d.class_id,
+                    "class_name": d.class_name,
+                    "category": d.category,
+                    "confidence": round(d.confidence, 4),
+                    "bbox": list(d.bbox),
+                }
+                for d in result.best_detections
+            ],
         )
         event_store.save_snapshot_record(
             file_path=snapshot_path,
