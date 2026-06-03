@@ -11,9 +11,18 @@ from api.routes import stats, events, media, persons, vehicles
 
 app = FastAPI(title="RemoteAICamera API", version="1.0")
 
+# CORS: config.yaml の api_server.cors_origins を使用
+# build_app() 経由で起動した場合は動的に上書きされる
+def _get_cors_origins() -> list[str]:
+    try:
+        from config import load_config
+        return load_config().api_server.cors_origins
+    except Exception:
+        return ["http://localhost:5173", "http://localhost:3000"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=_get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -45,7 +54,6 @@ except Exception as e:
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
-    """WebSocket connection for real-time event notifications"""
     await manager.connect(ws)
     try:
         while True:
@@ -59,13 +67,12 @@ async def websocket_endpoint(ws: WebSocket):
 
 @app.on_event("startup")
 async def startup():
-    """Startup event"""
+    manager.set_event_loop(asyncio.get_event_loop())
     logger.info("RemoteAICamera API server started")
 
 
 @app.on_event("shutdown")
 async def shutdown():
-    """Shutdown event"""
     logger.info("RemoteAICamera API server stopped")
 
 

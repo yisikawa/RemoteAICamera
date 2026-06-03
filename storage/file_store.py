@@ -2,6 +2,7 @@
 from __future__ import annotations
 import os
 import shutil
+import subprocess
 import time
 from collections import deque
 from datetime import datetime
@@ -81,19 +82,65 @@ class FileStore:
         path = day_dir / f"{event_id}_{time_str}.mp4"
         h, w = frames[0][0].shape[:2]
 
-        writer = cv2.VideoWriter(
-            str(path),
-            cv2.VideoWriter_fourcc(*"mp4v"),
-            fps,
-            (w, h),
-        )
-        for img, _ in frames:
-            writer.write(img)
-        writer.release()
+        if not self._save_clip_ffmpeg(frames, path, fps, w, h):
+            self._save_clip_opencv(frames, path, fps, w, h)
 
         size_kb = path.stat().st_size // 1024
         logger.info(f"Clip saved: {path} ({size_kb}KB, {len(frames)} frames)")
         return str(path)
+
+    def _save_clip_ffmpeg(
+        self,
+        frames: list[tuple[np.ndarray, float]],
+        path: Path,
+        fps: float,
+        w: int,
+        h: int,
+    ) -> bool:
+        """OpenCV で一時ファイルに書き出し → ffmpeg で H.264 + faststart に変換"""
+        tmp = path.with_suffix(".tmp.mp4")
+        try:
+            writer = cv2.VideoWriter(
+                str(tmp), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h)
+            )
+            for img, _ in frames:
+                writer.write(img)
+            writer.release()
+
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-y", "-i", str(tmp),
+                    "-vcodec", "libx264", "-crf", "23", "-preset", "fast",
+                    "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                    str(path),
+                ],
+                capture_output=True,
+                timeout=120,
+            )
+            return result.returncode == 0 and path.exists()
+        except Exception as e:
+            logger.debug(f"ffmpeg encoding failed: {e}")
+            return False
+        finally:
+            if tmp.exists():
+                tmp.unlink()
+
+    def _save_clip_opencv(
+        self,
+        frames: list[tuple[np.ndarray, float]],
+        path: Path,
+        fps: float,
+        w: int,
+        h: int,
+    ) -> None:
+        """OpenCV フォールバック（mp4v・ブラウザ非対応）"""
+        logger.warning(f"Falling back to mp4v codec (ffmpeg unavailable): {path.name}")
+        writer = cv2.VideoWriter(
+            str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h)
+        )
+        for img, _ in frames:
+            writer.write(img)
+        writer.release()
 
     # ------------------------------------------------------------------ #
     # ストレージ容量管理                                                    #

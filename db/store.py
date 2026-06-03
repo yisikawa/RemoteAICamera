@@ -89,6 +89,11 @@ class EventStore:
             event_id_log = event_id or "unknown"
 
         with self._session() as s:
+            existing = s.query(DetectionEventRecord).filter_by(event_id=record.event_id).first()
+            if existing:
+                logger.warning(f"Duplicate event_id skipped: {record.event_id}")
+                s.expunge(existing)
+                return existing
             s.add(record)
         logger.debug(f"Event saved: {event_id_log} ({detection_type or 'motion'})")
         return record

@@ -73,11 +73,22 @@ class LMStudioConfig:
 
 
 @dataclass
+class ApiServerConfig:
+    host: str = "0.0.0.0"
+    port: int = 8000
+    cors_origins: list[str] = field(default_factory=lambda: [
+        "http://localhost:5173",
+        "http://localhost:3000",
+    ])
+
+
+@dataclass
 class AppConfig:
     cameras: list[CameraConfig]
     detection: DetectionConfig = field(default_factory=DetectionConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     lm_studio: LMStudioConfig = field(default_factory=LMStudioConfig)
+    api_server: ApiServerConfig = field(default_factory=ApiServerConfig)
 
 
 def load_config(path: str = "config.yaml") -> AppConfig:
@@ -99,9 +110,12 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     if "vision_model" in lms_raw and "model" not in lms:
         lms["model"] = lms_raw["vision_model"]
 
+    api_raw = raw.get("api_server", {})
+
     return AppConfig(
         cameras=cameras,
         detection=DetectionConfig(**det),
         storage=StorageConfig(**sto),
         lm_studio=LMStudioConfig(**lms) if lms else LMStudioConfig(),
+        api_server=ApiServerConfig(**api_raw) if api_raw else ApiServerConfig(),
     )
