@@ -1,5 +1,6 @@
 # 仮想環境
 .venv/
+.venv_old/
 
 # 設定ファイル (パスワード含む — config.yaml.example を参照)
 config.yaml
