@@ -84,8 +84,9 @@ def handle_clip(
         snapshot_path = file_store.save_snapshot(
             result.best_frame, event_id=event_id, prefix=cam_cfg.name
         )
+        audio_wav = capture.get_wav_segment(frames_as_list[0][1], frames_as_list[-1][1])
         clip_path = file_store.save_clip(
-            frames_as_list, event_id=event_id, fps=15.0
+            frames_as_list, event_id=event_id, fps=15.0, audio_wav=audio_wav
         )
 
         event_store.save_event(
@@ -169,6 +170,7 @@ def camera_worker(
         rtsp_url=rtsp_url,
         buffer_seconds=max(20, int(cfg.storage.clip_duration_sec) + 5),
         reconnect_interval=cam_cfg.reconnect_interval,
+        audio_buffer_seconds=max(30, int(cfg.storage.clip_duration_sec) + 10),
     )
     capture.start()
 

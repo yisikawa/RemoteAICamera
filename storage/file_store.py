@@ -70,6 +70,7 @@ class FileStore:
         frames: list[tuple[np.ndarray, float]],  # (image, timestamp) リスト
         event_id: str,
         fps: float = 15.0,
+        audio_wav: Optional[bytes] = None,
     ) -> Optional[str]:
         if not frames:
             return None
@@ -82,7 +83,7 @@ class FileStore:
         path = day_dir / f"{event_id}_{time_str}.mp4"
         h, w = frames[0][0].shape[:2]
 
-        if not self._save_clip_ffmpeg(frames, path, fps, w, h):
+        if not self._save_clip_ffmpeg(frames, path, fps, w, h, audio_wav=audio_wav):
             self._save_clip_opencv(frames, path, fps, w, h)
 
         size_kb = path.stat().st_size // 1024
@@ -96,9 +97,12 @@ class FileStore:
         fps: float,
         w: int,
         h: int,
+        audio_wav: Optional[bytes] = None,
     ) -> bool:
-        """OpenCV で一時ファイルに書き出し → ffmpeg で H.264 + faststart に変換"""
+        """OpenCV で一時ファイルに書き出し → ffmpeg で H.264 + faststart に変換。
+        audio_wav が指定された場合は音声トラックも mux する。"""
         tmp = path.with_suffix(".tmp.mp4")
+        audio_tmp = path.with_suffix(".tmp.wav") if audio_wav else None
         try:
             writer = cv2.VideoWriter(
                 str(tmp), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h)
@@ -107,16 +111,28 @@ class FileStore:
                 writer.write(img)
             writer.release()
 
-            result = subprocess.run(
-                [
+            if audio_wav and audio_tmp:
+                audio_tmp.write_bytes(audio_wav)
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", str(tmp),
+                    "-i", str(audio_tmp),
+                    "-vcodec", "libx264", "-crf", "23", "-preset", "fast",
+                    "-pix_fmt", "yuv420p",
+                    "-acodec", "aac", "-ac", "1",
+                    "-movflags", "+faststart",
+                    "-shortest",
+                    str(path),
+                ]
+            else:
+                cmd = [
                     "ffmpeg", "-y", "-i", str(tmp),
                     "-vcodec", "libx264", "-crf", "23", "-preset", "fast",
                     "-pix_fmt", "yuv420p", "-movflags", "+faststart",
                     str(path),
-                ],
-                capture_output=True,
-                timeout=120,
-            )
+                ]
+
+            result = subprocess.run(cmd, capture_output=True, timeout=120)
             return result.returncode == 0 and path.exists()
         except Exception as e:
             logger.debug(f"ffmpeg encoding failed: {e}")
@@ -124,6 +140,8 @@ class FileStore:
         finally:
             if tmp.exists():
                 tmp.unlink()
+            if audio_tmp and audio_tmp.exists():
+                audio_tmp.unlink()
 
     def _save_clip_opencv(
         self,

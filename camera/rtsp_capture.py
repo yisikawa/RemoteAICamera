@@ -1,10 +1,12 @@
-"""RTSP ストリームキャプチャ + フレームバッファ管理"""
+"""RTSP ストリームキャプチャ（映像・音声を単一接続で同時取得 via PyAV）"""
+from __future__ import annotations
+import io
 import threading
 import time
+import wave
 from collections import deque
 from dataclasses import dataclass
 from typing import Optional
-import cv2
 import numpy as np
 from loguru import logger
 
@@ -18,27 +20,32 @@ class Frame:
 
 class RTSPCapture:
     """
-    別スレッドで RTSP を常時受信し、最新フレームをバッファに保持する。
+    PyAV で RTSP を常時受信し、映像フレームと音声を単一接続からバッファに保持する。
     カメラ切断時は reconnect_interval 秒後に自動再接続する。
     """
 
     def __init__(
         self,
         rtsp_url: str,
-        buffer_seconds: int = 20,  # ONVIF駆動型: 15秒クリップ + 余裕
+        buffer_seconds: int = 20,
         fps_hint: int = 15,
         reconnect_interval: int = 5,
+        audio_buffer_seconds: int = 30,
     ):
         self.rtsp_url = rtsp_url
         self.reconnect_interval = reconnect_interval
         buffer_size = buffer_seconds * fps_hint
         self._buffer: deque[Frame] = deque(maxlen=buffer_size)
+        self._audio_buf: deque[tuple[float, np.ndarray]] = deque()
+        self._audio_buffer_seconds = audio_buffer_seconds
         self._lock = threading.Lock()
+        self._audio_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._frame_id = 0
         self._fps = 0.0
         self._connected = False
+        self._sample_rate: int = 8000
 
     # ------------------------------------------------------------------ #
     # Public API                                                           #
@@ -66,6 +73,10 @@ class RTSPCapture:
     def fps(self) -> float:
         return self._fps
 
+    @property
+    def sample_rate(self) -> int:
+        return self._sample_rate
+
     def latest_frame(self) -> Optional[Frame]:
         with self._lock:
             return self._buffer[-1] if self._buffer else None
@@ -80,46 +91,133 @@ class RTSPCapture:
         frame = self.latest_frame()
         return frame.data.copy() if frame else None
 
+    def get_wav_segment(self, start_ts: float, end_ts: float) -> Optional[bytes]:
+        """指定時間範囲の音声を WAV バイト列で返す。データがなければ None。"""
+        with self._audio_lock:
+            segments = [s for ts, s in self._audio_buf if start_ts <= ts <= end_ts]
+
+        if not segments:
+            return None
+
+        all_samples = np.concatenate(segments)
+        pcm_int16 = (np.clip(all_samples, -1.0, 1.0) * 32767).astype(np.int16)
+
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(self._sample_rate)
+            wf.writeframes(pcm_int16.tobytes())
+        return buf.getvalue()
+
     # ------------------------------------------------------------------ #
     # Internal                                                             #
     # ------------------------------------------------------------------ #
 
     def _capture_loop(self):
         while not self._stop_event.is_set():
-            cap = self._open_capture()
-            if cap is None:
-                time.sleep(self.reconnect_interval)
-                continue
+            try:
+                self._run_av()
+            except Exception as e:
+                logger.warning(f"RTSPCapture error: {e}")
+                self._connected = False
+                if not self._stop_event.is_set():
+                    logger.info(f"Reconnecting in {self.reconnect_interval}s…")
+                    time.sleep(self.reconnect_interval)
+
+    def _run_av(self):
+        import av
+        container = av.open(
+            self.rtsp_url,
+            options={"rtsp_transport": "tcp", "stimeout": "5000000"},
+            timeout=10,
+        )
+        try:
+            video_stream = next((s for s in container.streams if s.type == "video"), None)
+            audio_stream = next((s for s in container.streams if s.type == "audio"), None)
+
+            if video_stream is None:
+                logger.warning("No video stream in RTSP")
+                return
+
+            if audio_stream is not None:
+                self._sample_rate = audio_stream.codec_context.sample_rate
+
+            streams_to_decode = [s for s in [video_stream, audio_stream] if s is not None]
+
+            # 音声フォーマット変換: fltp（float32 -1〜1）・モノラルに統一
+            resampler = av.AudioResampler(
+                format="fltp", layout="mono", rate=self._sample_rate
+            ) if audio_stream is not None else None
+
+            # 映像 PTS → wall clock 変換用
+            v_first_pts: Optional[int] = None
+            v_wall_start: float = 0.0
+            v_time_base = float(video_stream.time_base)
+
+            # 音声 PTS → wall clock 変換用
+            a_first_pts: Optional[int] = None
+            a_wall_start: float = 0.0
+            a_time_base = float(audio_stream.time_base) if audio_stream else 1.0
+            a_chunk_size = int(self._sample_rate * 0.1)  # 100ms 単位
+            a_buf = np.array([], dtype=np.float32)
+            a_buf_start_ts: Optional[float] = None
 
             self._connected = True
             logger.info("RTSP stream opened")
             fps_counter = _FPSCounter()
 
-            while not self._stop_event.is_set():
-                ret, img = cap.read()
-                if not ret:
-                    logger.warning("Frame read failed — reconnecting")
+            for packet in container.demux(*streams_to_decode):
+                if self._stop_event.is_set():
                     break
-                ts = time.time()
-                self._frame_id += 1
-                frame = Frame(data=img, timestamp=ts, frame_id=self._frame_id)
-                with self._lock:
-                    self._buffer.append(frame)
-                self._fps = fps_counter.tick()
 
-            cap.release()
+                for frame in packet.decode():
+                    if frame is None:
+                        continue
+
+                    if packet.stream is video_stream:
+                        if frame.pts is None:
+                            ts = time.time()
+                        else:
+                            if v_first_pts is None:
+                                v_first_pts = frame.pts
+                                v_wall_start = time.time()
+                            ts = v_wall_start + (frame.pts - v_first_pts) * v_time_base
+
+                        img = frame.to_ndarray(format="bgr24")
+                        self._frame_id += 1
+                        f = Frame(data=img, timestamp=ts, frame_id=self._frame_id)
+                        with self._lock:
+                            self._buffer.append(f)
+                        self._fps = fps_counter.tick()
+
+                    elif packet.stream is audio_stream:
+                        if frame.pts is None:
+                            continue
+                        if a_first_pts is None:
+                            a_first_pts = frame.pts
+                            a_wall_start = time.time()
+                        frame_wall_ts = a_wall_start + (frame.pts - a_first_pts) * a_time_base
+
+                        for resampled in resampler.resample(frame):
+                            pcm = resampled.to_ndarray().flatten()
+                            if a_buf_start_ts is None:
+                                a_buf_start_ts = frame_wall_ts
+                            a_buf = np.concatenate([a_buf, pcm])
+
+                        while len(a_buf) >= a_chunk_size:
+                            chunk, a_buf = a_buf[:a_chunk_size], a_buf[a_chunk_size:]
+                            chunk_ts = a_buf_start_ts
+                            a_buf_start_ts += a_chunk_size / self._sample_rate
+                            now = time.time()
+                            with self._audio_lock:
+                                self._audio_buf.append((chunk_ts, chunk))
+                                cutoff = now - self._audio_buffer_seconds
+                                while self._audio_buf and self._audio_buf[0][0] < cutoff:
+                                    self._audio_buf.popleft()
+        finally:
+            container.close()
             self._connected = False
-            if not self._stop_event.is_set():
-                logger.info(f"Reconnecting in {self.reconnect_interval}s…")
-                time.sleep(self.reconnect_interval)
-
-    def _open_capture(self) -> Optional[cv2.VideoCapture]:
-        cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        if not cap.isOpened():
-            logger.warning(f"Cannot open RTSP: {self.rtsp_url}")
-            return None
-        return cap
 
 
 class _FPSCounter:
