@@ -12,10 +12,10 @@ from pipeline.detector import YOLODetector, Detection, CATEGORY_MAP
 
 # detection_type の優先順位（複数検出時にどのカテゴリを代表とするか）
 _CATEGORY_PRIORITY: dict[str, int] = {
-    "person":     5,
-    "pet":        4,
-    "motorcycle": 3,
-    "bicycle":    2,
+    "pet":        5,
+    "motorcycle": 4,
+    "bicycle":    3,
+    "person":     2,
     "car":        1,
     "other":      0,
 }
