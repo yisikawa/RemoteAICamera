@@ -1,8 +1,11 @@
 """Event-related endpoints"""
+import asyncio
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from api.deps import get_event_store
@@ -167,6 +170,89 @@ def delete_event(event_id: str, store: EventStore = Depends(get_event_store)):
     from api.ws_manager import manager
     manager.broadcast_from_thread({"type": "deleted", "event_id": event_id, "detection_type": detection_type})
     return Response(status_code=204)
+
+
+@router.get("/{event_id}/similar/stream")
+async def stream_similar_events(event_id: str, store: EventStore = Depends(get_event_store)):
+    """SSE: 同カテゴリの直近N件と画像類似判定し、1件ずつストリームで返す"""
+    from ai.identity_client import IdentityClient, SIMILAR_CANDIDATES_LIMIT
+
+    target = store.get_event_by_id(event_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Event not found")
+    if not target.snapshot_path or not Path(target.snapshot_path).exists():
+        raise HTTPException(status_code=400, detail="No snapshot available for this event")
+
+    rows, _ = store.get_events_filtered(
+        detection_type=target.detection_type,
+        limit=SIMILAR_CANDIDATES_LIMIT + 1,
+    )
+    already_compared = {row.event_id_b for row in store.get_similarities(event_id)}
+    candidates = [
+        r for r in rows
+        if r.event_id != event_id
+        and r.event_id not in already_compared
+        and r.snapshot_path
+        and Path(r.snapshot_path).exists()
+    ][:SIMILAR_CANDIDATES_LIMIT]
+
+    total = len(candidates)
+    client = IdentityClient()
+
+    async def generate():
+        if total == 0:
+            yield f"data: {json.dumps({'done': 0, 'total': 0, 'finished': True})}\n\n"
+            return
+        for i, candidate in enumerate(candidates):
+            verdict, reason = await asyncio.to_thread(
+                client.compare,
+                target.snapshot_path,
+                candidate.snapshot_path,
+                target.detection_type,
+                target.detections_json,
+                candidate.detections_json,
+            )
+            if verdict == "SAME":
+                await asyncio.to_thread(store.save_similarity, event_id, candidate.event_id, reason)
+            payload = {
+                "done": i + 1,
+                "total": total,
+                "event_id": candidate.event_id,
+                "started_at": candidate.started_at.isoformat() if candidate.started_at else "",
+                "detection_type": candidate.detection_type,
+                "snapshot_url": _path_to_url(candidate.snapshot_path),
+                "verdict": verdict,
+                "reason": reason,
+                "finished": False,
+            }
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'done': total, 'total': total, 'finished': True})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/{event_id}/similarities")
+def get_event_similarities(event_id: str, store: EventStore = Depends(get_event_store)):
+    """DB に保存済みの類似判定結果を返す"""
+    rows = store.get_similarities(event_id)
+    results = []
+    for row in rows:
+        candidate = store.get_event_by_id(row.event_id_b)
+        if candidate:
+            results.append({
+                "event_id": candidate.event_id,
+                "started_at": candidate.started_at.isoformat() if candidate.started_at else "",
+                "detection_type": candidate.detection_type,
+                "snapshot_url": _path_to_url(candidate.snapshot_path),
+                "verdict": "SAME",
+                "reason": row.reason,
+                "compared_at": row.compared_at.isoformat() if row.compared_at else "",
+            })
+    return results
 
 
 @router.get("/{event_id}/snapshots", response_model=list[SnapshotResponse])

@@ -2,7 +2,7 @@
 from datetime import datetime
 from sqlalchemy import (
     Column, Integer, Float, String, DateTime,
-    ForeignKey, JSON, Boolean, Text, Index,
+    ForeignKey, JSON, Boolean, Text, Index, UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -40,6 +40,21 @@ class DetectionEventRecord(Base):
 
     __table_args__ = (
         Index("ix_events_started_type", "started_at", "detection_type"),
+    )
+
+
+class EventSimilarity(Base):
+    """画像類似判定結果（SAME のみ記録）"""
+    __tablename__ = "event_similarities"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id_a = Column(String(64), nullable=False, index=True)  # 検索元
+    event_id_b = Column(String(64), nullable=False, index=True)  # 一致先
+    reason = Column(Text)
+    compared_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint("event_id_a", "event_id_b", name="uq_similarity_pair"),
     )
 
 

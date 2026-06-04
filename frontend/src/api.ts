@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { DetectionEvent, EventsListResponse, Summary } from './types';
+import type { DetectionEvent, EventsListResponse, SimilarResult, Summary } from './types';
 
 const API_BASE = 'http://localhost:8000';
 
@@ -30,6 +30,11 @@ export const eventApi = {
 
   updateEventType: async (eventId: string, detectionType: string): Promise<DetectionEvent> => {
     const res = await api.patch(`/api/events/${eventId}`, { detection_type: detectionType });
+    return res.data;
+  },
+
+  getSimilarities: async (eventId: string): Promise<SimilarResult[]> => {
+    const res = await api.get(`/api/events/${eventId}/similarities`);
     return res.data;
   },
 };

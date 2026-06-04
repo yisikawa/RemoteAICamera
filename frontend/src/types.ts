@@ -21,6 +21,16 @@ export interface EventsListResponse {
   total: number;
 }
 
+export interface SimilarResult {
+  event_id: string
+  started_at: string
+  detection_type: string
+  snapshot_url: string | null
+  verdict: 'SAME' | 'DIFFERENT'
+  reason: string
+  compared_at?: string
+}
+
 export interface Summary {
   total_events: number;
   snapshots: number;

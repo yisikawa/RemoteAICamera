@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { eventApi } from './api'
-import type { Summary, DetectionEvent } from './types'
+import type { Summary, DetectionEvent, SimilarResult } from './types'
 import './index.css'
 
 const WS_URL = 'ws://localhost:8000/ws'
+const API_BASE = 'http://localhost:8000'
 
 const TYPE_COLOR: Record<string, string> = {
   person:     'bg-emerald-500',
@@ -150,13 +151,78 @@ function App() {
   const [wsConnected, setWsConnected] = useState(false)
   const [editingType, setEditingType] = useState(false)
   const [savingType, setSavingType] = useState(false)
+  const [similarResults, setSimilarResults] = useState<SimilarResult[]>([])
+  const [similarLoading, setSimilarLoading] = useState(false)
+  const [similarDone, setSimilarDone] = useState(0)
+  const [similarTotal, setSimilarTotal] = useState(0)
 
   const unmountedRef = useRef(false)
+  const similarSourceRef = useRef<EventSource | null>(null)
 
   useEffect(() => {
     setEditingType(false)
     setSavingType(false)
+    if (similarSourceRef.current) {
+      similarSourceRef.current.close()
+      similarSourceRef.current = null
+    }
+    setSimilarResults([])
+    setSimilarLoading(false)
+    setSimilarDone(0)
+    setSimilarTotal(0)
+
+    // イベント選択時にDB保存済みの類似結果を取得
+    if (selectedEvent?.event_id) {
+      eventApi.getSimilarities(selectedEvent.event_id)
+        .then(cached => { if (cached.length > 0) setSimilarResults(cached) })
+        .catch(() => {})
+    }
   }, [selectedEvent?.event_id])
+
+  const handleFindSimilar = useCallback(() => {
+    if (!selectedEvent) return
+    if (similarSourceRef.current) {
+      similarSourceRef.current.close()
+    }
+    setSimilarLoading(true)
+    setSimilarDone(0)
+    setSimilarTotal(0)
+
+    const source = new EventSource(
+      `${API_BASE}/api/events/${selectedEvent.event_id}/similar/stream`
+    )
+    similarSourceRef.current = source
+
+    source.onmessage = (e: MessageEvent) => {
+      const data = JSON.parse(e.data)
+      if (data.finished) {
+        setSimilarLoading(false)
+        source.close()
+        return
+      }
+      setSimilarDone(data.done)
+      setSimilarTotal(data.total)
+      if (data.verdict === 'SAME') {
+        setSimilarResults(prev => {
+          // 重複追加を防ぐ
+          if (prev.some(r => r.event_id === data.event_id)) return prev
+          return [...prev, {
+            event_id: data.event_id,
+            started_at: data.started_at,
+            detection_type: data.detection_type,
+            snapshot_url: data.snapshot_url,
+            verdict: data.verdict,
+            reason: data.reason,
+          }]
+        })
+      }
+    }
+
+    source.onerror = () => {
+      setSimilarLoading(false)
+      source.close()
+    }
+  }, [selectedEvent])
 
   useEffect(() => {
     unmountedRef.current = false
@@ -371,12 +437,24 @@ function App() {
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Details</h2>
               {selectedEvent && (
-                <button
-                  onClick={() => setConfirmTarget(selectedEvent)}
-                  className="text-xs text-red-400 hover:text-red-300 border border-red-800 hover:border-red-600 px-2.5 py-1 rounded-lg transition"
-                >
-                  削除
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleFindSimilar}
+                    disabled={similarLoading}
+                    className="text-xs text-violet-400 hover:text-violet-300 border border-violet-800 hover:border-violet-600 px-2.5 py-1 rounded-lg transition disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {similarLoading && (
+                      <span className="w-3 h-3 border-2 border-violet-400/40 border-t-violet-400 rounded-full animate-spin" />
+                    )}
+                    類似を検索
+                  </button>
+                  <button
+                    onClick={() => setConfirmTarget(selectedEvent)}
+                    className="text-xs text-red-400 hover:text-red-300 border border-red-800 hover:border-red-600 px-2.5 py-1 rounded-lg transition"
+                  >
+                    削除
+                  </button>
+                </div>
               )}
             </div>
 
@@ -447,6 +525,82 @@ function App() {
                     </div>
                   )}
                 </div>
+
+                {/* 類似イベントセクション */}
+                {(similarLoading || similarResults.length > 0) && (
+                  <div className="pt-3 border-t border-slate-700">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">類似イベント</span>
+                      <span className="text-xs text-slate-500">
+                        {similarLoading
+                          ? `${similarDone} / ${similarTotal} 比較中...`
+                          : `${similarResults.filter(r => r.verdict === 'SAME').length} 件一致`}
+                      </span>
+                    </div>
+
+                    {/* 進捗バー */}
+                    {similarLoading && (
+                      <div className="w-full bg-slate-700 rounded-full h-1.5 mb-3">
+                        <div
+                          className="bg-violet-500 h-1.5 rounded-full transition-all duration-500"
+                          style={{ width: similarTotal > 0 ? `${(similarDone / similarTotal) * 100}%` : '0%' }}
+                        />
+                      </div>
+                    )}
+
+                    {/* 結果リスト（1件ずつ追加） */}
+                    <div className="space-y-2">
+                      {similarResults.filter(r => r.verdict === 'SAME').map(r => (
+                        <div
+                          key={r.event_id}
+                          onClick={async () => {
+                            const ev = events.find(e => e.event_id === r.event_id)
+                            if (ev) {
+                              setSelectedEvent(ev)
+                            } else {
+                              const fetched = await eventApi.getEvent(r.event_id)
+                              setSelectedEvent(fetched)
+                            }
+                          }}
+                          className={`flex gap-2 items-start p-2 rounded-lg cursor-pointer transition ${
+                            r.verdict === 'SAME'
+                              ? 'bg-emerald-900/30 hover:bg-emerald-900/50'
+                              : 'bg-slate-900/50 hover:bg-slate-700/50'
+                          }`}
+                        >
+                          {r.snapshot_url && (
+                            <img
+                              src={r.snapshot_url}
+                              alt="snapshot"
+                              className="w-14 h-14 object-cover rounded shrink-0"
+                            />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-0.5">
+                              <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
+                                r.verdict === 'SAME'
+                                  ? 'bg-emerald-500 text-white'
+                                  : 'bg-slate-600 text-slate-300'
+                              }`}>
+                                {r.verdict === 'SAME' ? '一致' : '不一致'}
+                              </span>
+                              <span className="text-xs text-slate-400">
+                                {new Date(r.started_at).toLocaleString('ja-JP')}
+                              </span>
+                            </div>
+                            <div className="text-xs text-slate-300 line-clamp-2">{r.reason}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {!similarLoading && similarResults.length === 0 && (
+                      <div className="text-xs text-slate-500 py-2 text-center">
+                        類似イベントは見つかりませんでした
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="flex-1 flex items-center justify-center text-slate-600 text-sm">

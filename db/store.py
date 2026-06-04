@@ -9,7 +9,8 @@ from sqlalchemy import create_engine, desc
 from sqlalchemy.orm import sessionmaker, Session
 from loguru import logger
 
-from .models import Base, DetectionEventRecord, KnownPerson, KnownVehicle, Snapshot
+from sqlalchemy import or_
+from .models import Base, DetectionEventRecord, EventSimilarity, KnownPerson, KnownVehicle, Snapshot
 from pipeline.event_filter import DetectionEvent
 
 
@@ -116,6 +117,12 @@ class EventStore:
 
             # Snapshot レコード削除
             s.query(Snapshot).filter_by(event_id=event_id).delete()
+
+            # EventSimilarity レコード削除（検索元・一致先の両方向）
+            s.query(EventSimilarity).filter(
+                or_(EventSimilarity.event_id_a == event_id,
+                    EventSimilarity.event_id_b == event_id)
+            ).delete(synchronize_session=False)
 
             s.delete(record)
         logger.info(f"Event deleted: {event_id}")
@@ -328,6 +335,36 @@ class EventStore:
                 s.query(Snapshot)
                 .filter_by(event_id=event_id)
                 .order_by(Snapshot.taken_at)
+                .all()
+            )
+            s.expunge_all()
+            return rows
+
+    # ------------------------------------------------------------------ #
+    # 画像類似判定記録                                                      #
+    # ------------------------------------------------------------------ #
+
+    def save_similarity(self, event_id_a: str, event_id_b: str, reason: str):
+        """SAME 判定結果を保存。同ペアの重複は上書きしない。"""
+        with self._session() as s:
+            existing = s.query(EventSimilarity).filter_by(
+                event_id_a=event_id_a, event_id_b=event_id_b
+            ).first()
+            if not existing:
+                s.add(EventSimilarity(
+                    event_id_a=event_id_a,
+                    event_id_b=event_id_b,
+                    reason=reason,
+                ))
+        logger.debug(f"Similarity saved: {event_id_a} ~ {event_id_b}")
+
+    def get_similarities(self, event_id: str) -> list[EventSimilarity]:
+        """event_id を検索元とする SAME 記録を返す"""
+        with self._session() as s:
+            rows = (
+                s.query(EventSimilarity)
+                .filter_by(event_id_a=event_id)
+                .order_by(desc(EventSimilarity.compared_at))
                 .all()
             )
             s.expunge_all()
