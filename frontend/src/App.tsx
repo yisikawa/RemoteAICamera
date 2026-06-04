@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { eventApi } from './api'
 import type { Summary, DetectionEvent } from './types'
 import './index.css'
+
+const WS_URL = 'ws://localhost:8000/ws'
 
 const TYPE_COLOR: Record<string, string> = {
   person:     'bg-emerald-500',
@@ -145,9 +147,21 @@ function App() {
   const [confirmTarget, setConfirmTarget] = useState<DetectionEvent | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [activeFilter, setActiveFilter] = useState<string | null>(null)
+  const [wsConnected, setWsConnected] = useState(false)
+  const [editingType, setEditingType] = useState(false)
+  const [savingType, setSavingType] = useState(false)
+
+  const unmountedRef = useRef(false)
 
   useEffect(() => {
-    const fetchData = async () => {
+    setEditingType(false)
+    setSavingType(false)
+  }, [selectedEvent?.event_id])
+
+  useEffect(() => {
+    unmountedRef.current = false
+
+    const fetchAll = async () => {
       try {
         const [summaryData, eventsData] = await Promise.all([
           eventApi.getSummary(),
@@ -161,8 +175,90 @@ function App() {
         setLoading(false)
       }
     }
-    fetchData()
+
+    let ws: WebSocket | null = null
+    let retryDelay = 1000
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+
+    const connect = () => {
+      if (unmountedRef.current) return
+      ws = new WebSocket(WS_URL)
+
+      ws.onopen = () => {
+        setWsConnected(true)
+        retryDelay = 1000
+        fetchAll()
+      }
+
+      ws.onmessage = (e: MessageEvent) => {
+        try {
+          const msg = JSON.parse(e.data) as { type: string; event_id: string; detection_type: string }
+          if (msg.type === 'new_event') {
+            eventApi.getEvent(msg.event_id).then(event => {
+              setEvents(prev => {
+                if (prev.some(ev => ev.event_id === event.event_id)) return prev
+                return [event, ...prev].slice(0, 500)
+              })
+              eventApi.getSummary().then(setSummary).catch(() => {})
+            }).catch(() => {})
+          } else if (msg.type === 'type_updated') {
+            setEvents(prev => prev.map(ev =>
+              ev.event_id === msg.event_id ? { ...ev, detection_type: msg.detection_type } : ev
+            ))
+            setSelectedEvent(prev =>
+              prev?.event_id === msg.event_id ? { ...prev, detection_type: msg.detection_type } : prev
+            )
+            eventApi.getSummary().then(setSummary).catch(() => {})
+          } else if (msg.type === 'deleted') {
+            setEvents(prev => prev.filter(ev => ev.event_id !== msg.event_id))
+            setSelectedEvent(prev => prev?.event_id === msg.event_id ? null : prev)
+            eventApi.getSummary().then(setSummary).catch(() => {})
+          }
+        } catch {}
+      }
+
+      ws.onclose = () => {
+        setWsConnected(false)
+        if (unmountedRef.current) return
+        retryTimer = setTimeout(() => {
+          retryDelay = Math.min(retryDelay * 2, 30_000)
+          connect()
+        }, retryDelay)
+      }
+
+      ws.onerror = () => ws?.close()
+    }
+
+    fetchAll()
+    connect()
+
+    return () => {
+      unmountedRef.current = true
+      if (retryTimer) clearTimeout(retryTimer)
+      ws?.close()
+    }
   }, [])
+
+  const handleTypeChange = async (newType: string) => {
+    if (!selectedEvent || newType === selectedEvent.detection_type) {
+      setEditingType(false)
+      return
+    }
+    const prev = selectedEvent
+    setEditingType(false)
+    setSavingType(true)
+    const updated = { ...selectedEvent, detection_type: newType }
+    setSelectedEvent(updated)
+    setEvents(evs => evs.map(e => e.event_id === updated.event_id ? updated : e))
+    try {
+      await eventApi.updateEventType(selectedEvent.event_id, newType)
+    } catch {
+      setSelectedEvent(prev)
+      setEvents(evs => evs.map(e => e.event_id === prev.event_id ? prev : e))
+    } finally {
+      setSavingType(false)
+    }
+  }
 
   const handleDeleteConfirm = async () => {
     if (!confirmTarget) return
@@ -209,9 +305,13 @@ function App() {
       )}
 
       <div className="max-w-7xl mx-auto">
-        <div className="flex items-baseline gap-3 mb-6">
+        <div className="flex items-center gap-3 mb-6">
           <h1 className="text-2xl font-bold text-white tracking-tight">RemoteAICamera</h1>
-          <span className="text-xs text-red-400">最新 500 件表示</span>
+          <span className="text-xs text-slate-500">最新 500 件表示</span>
+          <span className={`ml-auto flex items-center gap-1.5 text-xs ${wsConnected ? 'text-emerald-400' : 'text-slate-500'}`}>
+            <span className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
+            {wsConnected ? 'LIVE' : '接続中...'}
+          </span>
         </div>
 
         {summary && (
@@ -301,9 +401,32 @@ function App() {
                   </div>
                   <div className="bg-slate-900 rounded-lg px-3 py-2">
                     <div className="text-xs text-slate-500 mb-0.5">種別</div>
-                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full text-white ${TYPE_COLOR[selectedEvent.detection_type] ?? 'bg-slate-500'}`}>
-                      {TYPE_LABEL[selectedEvent.detection_type] ?? selectedEvent.detection_type}
-                    </span>
+                    {editingType ? (
+                      <select
+                        autoFocus
+                        defaultValue={selectedEvent.detection_type}
+                        onChange={e => handleTypeChange(e.target.value)}
+                        onBlur={() => setEditingType(false)}
+                        className="text-xs bg-slate-700 text-white rounded px-1 py-0.5 border border-slate-500 outline-none"
+                      >
+                        {(['person','car','motorcycle','bicycle','pet','other'] as const).map(k => (
+                          <option key={k} value={k}>{TYPE_LABEL[k]}</option>
+                        ))}
+                      </select>
+                    ) : savingType ? (
+                      <span className="text-xs text-slate-400 flex items-center gap-1.5">
+                        <span className="w-3 h-3 border-2 border-slate-400/40 border-t-slate-400 rounded-full animate-spin" />
+                        保存中...
+                      </span>
+                    ) : (
+                      <span
+                        onClick={() => setEditingType(true)}
+                        title="クリックして種別を変更"
+                        className={`text-xs font-bold px-2 py-0.5 rounded-full text-white cursor-pointer hover:brightness-125 ${TYPE_COLOR[selectedEvent.detection_type] ?? 'bg-slate-500'}`}
+                      >
+                        {TYPE_LABEL[selectedEvent.detection_type] ?? selectedEvent.detection_type}
+                      </span>
+                    )}
                   </div>
                   <div className="bg-slate-900 rounded-lg px-3 py-2">
                     <div className="text-xs text-slate-500 mb-0.5">時刻</div>

@@ -74,6 +74,13 @@ def handle_clip(
             cam_log.warning(f"[{event_id}] Analysis failed")
             return
 
+        # YOLOが未検出(other)の場合はONVIFトリガー種別をフォールバックとして使う
+        _ONVIF_FALLBACK: dict[str, str] = {"vehicle": "car", "person": "person"}
+        detection_type = result.detection_type
+        if detection_type == "other" and trigger_event.detection_type in _ONVIF_FALLBACK:
+            detection_type = _ONVIF_FALLBACK[trigger_event.detection_type]
+            cam_log.debug(f"[{event_id}] YOLO=other → fallback to ONVIF:{trigger_event.detection_type} → {detection_type}")
+
         snapshot_path = file_store.save_snapshot(
             result.best_frame, event_id=event_id, prefix=cam_cfg.name
         )
@@ -85,7 +92,7 @@ def handle_clip(
             event_id=event_id,
             started_at=result.started_at,
             ended_at=result.ended_at,
-            detection_type=result.detection_type,
+            detection_type=detection_type,
             frame_count=result.frame_count,
             snapshot_path=snapshot_path,
             clip_path=clip_path,
@@ -110,7 +117,7 @@ def handle_clip(
         )
 
         cam_log.info(
-            f"[EVENT] {event_id} | type={result.detection_type} | "
+            f"[EVENT] {event_id} | type={detection_type} | "
             f"confidence={result.best_confidence:.2f} | frames={result.frame_count} | "
             f"snapshot={Path(snapshot_path).name if snapshot_path else '?'} | "
             f"clip={Path(clip_path).name if clip_path else '?'}"
@@ -123,7 +130,7 @@ def handle_clip(
                 "type": "new_event",
                 "event_id": event_id,
                 "camera": cam_cfg.name,
-                "detection_type": result.detection_type,
+                "detection_type": detection_type,
                 "confidence": round(result.best_confidence, 2),
                 "snapshot_url": f"/media/snapshots/{Path(snapshot_path).relative_to('data/snapshots').as_posix()}" if snapshot_path else None,
             })

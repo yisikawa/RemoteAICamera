@@ -121,6 +121,13 @@ class EventStore:
         logger.info(f"Event deleted: {event_id}")
         return True
 
+    def update_event_detection_type(self, event_id: str, detection_type: str):
+        with self._session() as s:
+            record = s.query(DetectionEventRecord).filter_by(event_id=event_id).first()
+            if record:
+                record.detection_type = detection_type
+        logger.info(f"Event type updated: {event_id} → {detection_type}")
+
     def update_event_recognition(
         self,
         event_id: str,

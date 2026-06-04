@@ -131,12 +131,41 @@ def get_event(event_id: str, store: EventStore = Depends(get_event_store)):
     return _event_to_response(record)
 
 
+class EventUpdateRequest(BaseModel):
+    detection_type: str
+
+
+@router.patch("/{event_id}", response_model=DetectionEventResponse)
+def update_event(event_id: str, body: EventUpdateRequest, store: EventStore = Depends(get_event_store)):
+    """種別を手動修正する"""
+    record = store.get_event_by_id(event_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Event not found")
+    old_type = record.detection_type
+    store.update_event_detection_type(event_id, body.detection_type)
+    updated = store.get_event_by_id(event_id)
+    from api.ws_manager import manager
+    manager.broadcast_from_thread({
+        "type": "type_updated",
+        "event_id": event_id,
+        "detection_type": body.detection_type,
+        "old_detection_type": old_type,
+    })
+    return _event_to_response(updated)
+
+
 @router.delete("/{event_id}", status_code=204)
 def delete_event(event_id: str, store: EventStore = Depends(get_event_store)):
     """イベントとファイルを削除する"""
+    record = store.get_event_by_id(event_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Event not found")
+    detection_type = record.detection_type
     deleted = store.delete_event(event_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Event not found")
+    from api.ws_manager import manager
+    manager.broadcast_from_thread({"type": "deleted", "event_id": event_id, "detection_type": detection_type})
     return Response(status_code=204)
 
 
