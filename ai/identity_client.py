@@ -7,9 +7,7 @@ import cv2
 import httpx
 from openai import OpenAI
 
-SIMILAR_CANDIDATES_LIMIT = 5   # 比較対象の最大件数（1行で変更可能）
-LMSTUDIO_BASE_URL = "http://localhost:11434/v1"
-LMSTUDIO_MODEL = "qwen2.5vl:7b"
+SIMILAR_CANDIDATES_LIMIT = 300  # 比較対象の最大件数（1行で変更可能）
 _CROP_PADDING_RATIO = 0.10     # bbox の周囲に追加するパディング（画像短辺の10%）
 _MAX_IMAGE_SIZE = 512          # クロップ後のリサイズ上限（px）
 
@@ -25,11 +23,12 @@ class SimilarityResult:
 
 
 class IdentityClient:
-    def __init__(self, base_url: str = LMSTUDIO_BASE_URL):
+    def __init__(self, base_url: str, model: str):
+        self._model = model
         # httpx 0.28+ が proxies 引数を廃止したため http_client を直接渡して回避
         self._client = OpenAI(
             base_url=base_url,
-            api_key="lm-studio",
+            api_key="ollama",
             http_client=httpx.Client(),
         )
 
@@ -59,7 +58,7 @@ class IdentityClient:
         )
 
         response = self._client.chat.completions.create(
-            model=LMSTUDIO_MODEL,
+            model=self._model,
             messages=[
                 {
                     "role": "user",

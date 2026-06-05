@@ -174,8 +174,9 @@ def delete_event(event_id: str, store: EventStore = Depends(get_event_store)):
 
 @router.get("/{event_id}/similar/stream")
 async def stream_similar_events(event_id: str, store: EventStore = Depends(get_event_store)):
-    """SSE: 同カテゴリの直近N件と画像類似判定し、1件ずつストリームで返す"""
+    """SSE: 同カテゴリの全件と画像類似判定し、1件ずつストリームで返す"""
     from ai.identity_client import IdentityClient, SIMILAR_CANDIDATES_LIMIT
+    from config import load_config
 
     target = store.get_event_by_id(event_id)
     if not target:
@@ -185,7 +186,7 @@ async def stream_similar_events(event_id: str, store: EventStore = Depends(get_e
 
     rows, _ = store.get_events_filtered(
         detection_type=target.detection_type,
-        limit=SIMILAR_CANDIDATES_LIMIT + 1,
+        limit=SIMILAR_CANDIDATES_LIMIT,
     )
     already_compared = {row.event_id_b for row in store.get_similarities(event_id)}
     candidates = [
@@ -194,10 +195,11 @@ async def stream_similar_events(event_id: str, store: EventStore = Depends(get_e
         and r.event_id not in already_compared
         and r.snapshot_path
         and Path(r.snapshot_path).exists()
-    ][:SIMILAR_CANDIDATES_LIMIT]
+    ]
 
     total = len(candidates)
-    client = IdentityClient()
+    ollama_cfg = load_config().ollama
+    client = IdentityClient(base_url=ollama_cfg.base_url, model=ollama_cfg.vision_model)
 
     async def generate():
         if total == 0:

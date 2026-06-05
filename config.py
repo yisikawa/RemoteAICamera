@@ -66,9 +66,10 @@ class StorageConfig:
 
 
 @dataclass
-class LMStudioConfig:
-    base_url: str = "http://localhost:1234/v1"
-    model: str = "qwen2.5-vl-7b-instruct-q4_k_m"   # ビジョン+チャット兼用
+class OllamaConfig:
+    base_url: str = "http://localhost:11434/v1"
+    vision_model: str = "qwen2.5vl:7b"
+    chat_model: str = "qwen2.5:7b"
     timeout: int = 30
 
 
@@ -87,7 +88,7 @@ class AppConfig:
     cameras: list[CameraConfig]
     detection: DetectionConfig = field(default_factory=DetectionConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
-    lm_studio: LMStudioConfig = field(default_factory=LMStudioConfig)
+    ollama: OllamaConfig = field(default_factory=OllamaConfig)
     api_server: ApiServerConfig = field(default_factory=ApiServerConfig)
 
 
@@ -104,18 +105,13 @@ def load_config(path: str = "config.yaml") -> AppConfig:
 
     det = raw.get("detection", {})
     sto = raw.get("storage", {})
-    lms_raw = raw.get("lm_studio", {})
-    # 旧キー (vision_model/chat_model) との後方互換
-    lms = {k: v for k, v in lms_raw.items() if k not in ("vision_model", "chat_model")}
-    if "vision_model" in lms_raw and "model" not in lms:
-        lms["model"] = lms_raw["vision_model"]
-
+    ollama_raw = raw.get("ollama", {})
     api_raw = raw.get("api_server", {})
 
     return AppConfig(
         cameras=cameras,
         detection=DetectionConfig(**det),
         storage=StorageConfig(**sto),
-        lm_studio=LMStudioConfig(**lms) if lms else LMStudioConfig(),
+        ollama=OllamaConfig(**ollama_raw) if ollama_raw else OllamaConfig(),
         api_server=ApiServerConfig(**api_raw) if api_raw else ApiServerConfig(),
     )

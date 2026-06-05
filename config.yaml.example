@@ -53,10 +53,10 @@ storage:
   clip_duration_sec: 15         # 総クリップ長
   max_storage_gb: 50
 
-lm_studio:
-  base_url: "http://localhost:1234/v1"
-  # PatataAliena/Qwen2.5-VL-7B-Instruct-Q4_K_M-GGUF (ビジョン+チャット兼用)
-  model: "qwen2.5-vl-7b-instruct-q4_k_m"
+ollama:
+  base_url: "http://localhost:11434/v1"
+  vision_model: "qwen2.5vl:7b"   # 画像類似判定用 (Phase 3)
+  chat_model: "qwen2.5:7b"       # チャット用 (将来)
   timeout: 30
 
 logging:

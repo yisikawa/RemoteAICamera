@@ -12,7 +12,7 @@ TP-Link Tapo C520W カメラ + ローカル AI (LM Studio) を使った、プラ
 |---|---|---|
 | Phase 1 | RTSP受信・ONVIF駆動イベント検知・YOLOv8全クラス分類・静止画/動画保存・SQLite記録 | ✅ 完了 |
 | Phase 2 | 顔認識 (InsightFace)・ナンバープレート認識 (EasyOCR) | 🔲 予定 |
-| Phase 3 | LM Studio連携・カテゴリ別同一性判定・自然言語クエリ | 🔲 予定 |
+| Phase 3 | Ollama連携・カテゴリ別画像類似判定（Qwen2.5-VL）・類似検索UI | ✅ 完了 |
 | Phase 4 | Web ダッシュボード (FastAPI + React) | ✅ 完了 |
 
 ---
@@ -72,7 +72,7 @@ YOLOv8s (COCO 80クラス) の検出結果を以下の6カテゴリに集約し�
 | Python | 3.11 以上 |
 | GPU | NVIDIA RTX シリーズ (CUDA 12.x) |
 | カメラ | TP-Link Tapo C520W (RTSP/ONVIF対応) |
-| AI推論 | LM Studio (Phase 3以降) |
+| AI推論 | Ollama (Qwen2.5-VL 7B, Phase 3) |
 
 開発・検証環境: RTX 4060 16GB / CUDA 12.8 / PyTorch cu126
 
@@ -204,6 +204,9 @@ RemoteAICamera/
 | イベント一覧 | カメラ別・時系列でイベントを表示（最新500件） |
 | 詳細パネル | スナップショット・クリップ動画・検出情報を表示 |
 | イベント削除 | 選択したイベントをDBと画像/動画ファイルごと削除 |
+| 類似検索 | 同カテゴリのスナップショットをLLMで比較し同一対象を検出 |
+
+![通常＋類似検索画面](doc/通常＋類似検索画面.png)
 
 ---
 
@@ -230,7 +233,7 @@ cameras:
 | YOLOv8s (常駐) | ~0.5 GB |
 | InsightFace buffalo_l (Phase 2) | ~1.0 GB |
 | EasyOCR (Phase 2) | ~1.5 GB |
-| Qwen2-VL 7B Q4 via LM Studio (Phase 3) | ~6.0 GB |
+| Qwen2.5-VL 7B via Ollama (Phase 3) | ~6.0 GB |
 | **合計 (最大)** | **~9.0 GB** |
 
 ---
@@ -242,9 +245,13 @@ cameras:
 - EasyOCR / PaddleOCR による日本語ナンバープレート認識
 - 既知人物・既知車両の通過ログ蓄積
 
-### Phase 3: LM Studio ローカル AI 連携
-- カテゴリ別イベント群の同一性判定（同一人物・同一車両の識別）
-- Qwen2-VL による初見人物・初見車両の状況説明生成
+### ✅ Phase 3: Ollama ローカル AI 連携（完了）
+- Ollama + Qwen2.5-VL 7B による同カテゴリスナップショット類似判定（SAME/DIFFERENT）
+- 類似検索 SSE API・ダッシュボード「類似を検索」UI
+- 類似判定結果を `event_similarities` テーブルに保存
+- 比較対象上限: `SIMILAR_CANDIDATES_LIMIT = 300` 件
+
+### Phase 4 以降（予定）
 - 自然言語クエリ対応（「昨日Aさんは何時に来た？」）
 - 日次イベントレポート自動生成
 
