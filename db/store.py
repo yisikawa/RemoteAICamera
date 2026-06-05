@@ -359,11 +359,14 @@ class EventStore:
         logger.debug(f"Similarity saved: {event_id_a} ~ {event_id_b}")
 
     def get_similarities(self, event_id: str) -> list[EventSimilarity]:
-        """event_id を検索元とする SAME 記録を返す"""
+        """event_id が検索元・検索先どちらでも SAME 記録を返す"""
         with self._session() as s:
             rows = (
                 s.query(EventSimilarity)
-                .filter_by(event_id_a=event_id)
+                .filter(or_(
+                    EventSimilarity.event_id_a == event_id,
+                    EventSimilarity.event_id_b == event_id,
+                ))
                 .order_by(desc(EventSimilarity.compared_at))
                 .all()
             )

@@ -188,7 +188,10 @@ async def stream_similar_events(event_id: str, store: EventStore = Depends(get_e
         detection_type=target.detection_type,
         limit=SIMILAR_CANDIDATES_LIMIT,
     )
-    already_compared = {row.event_id_b for row in store.get_similarities(event_id)}
+    already_compared = {
+        row.event_id_b if row.event_id_a == event_id else row.event_id_a
+        for row in store.get_similarities(event_id)
+    }
     candidates = [
         r for r in rows
         if r.event_id != event_id
@@ -243,7 +246,8 @@ def get_event_similarities(event_id: str, store: EventStore = Depends(get_event_
     rows = store.get_similarities(event_id)
     results = []
     for row in rows:
-        candidate = store.get_event_by_id(row.event_id_b)
+        other_id = row.event_id_b if row.event_id_a == event_id else row.event_id_a
+        candidate = store.get_event_by_id(other_id)
         if candidate:
             results.append({
                 "event_id": candidate.event_id,

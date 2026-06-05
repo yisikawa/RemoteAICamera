@@ -151,6 +151,7 @@ function App() {
   const [wsConnected, setWsConnected] = useState(false)
   const [editingType, setEditingType] = useState(false)
   const [savingType, setSavingType] = useState(false)
+  const [activeTab, setActiveTab] = useState<'events' | 'stats'>('events')
   const [similarResults, setSimilarResults] = useState<SimilarResult[]>([])
   const [similarLoading, setSimilarLoading] = useState(false)
   const [similarDone, setSimilarDone] = useState(0)
@@ -420,7 +421,32 @@ function App() {
           </div>
         )}
 
-        <div className="grid grid-cols-3 gap-5">
+        <div className="flex gap-1 border-b border-slate-700 mb-5">
+          {([
+            { id: 'events', label: 'イベント一覧' },
+            { id: 'stats',  label: '統計' },
+          ] as const).map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                activeTab === tab.id
+                  ? 'text-white border-sky-500'
+                  : 'text-slate-400 border-transparent hover:text-slate-200'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === 'stats' && (
+          <div className="flex items-center justify-center h-64 text-slate-500 text-sm bg-slate-800 rounded-xl border border-slate-700">
+            統計機能は今後実装予定です
+          </div>
+        )}
+
+        {activeTab === 'events' && <div className="grid grid-cols-3 gap-5">
           <div className="col-span-2 flex flex-col gap-3">
             {cameras.map(name => (
               <EventList
@@ -608,7 +634,7 @@ function App() {
               </div>
             )}
           </div>
-        </div>
+        </div>}
       </div>
     </div>
   )
