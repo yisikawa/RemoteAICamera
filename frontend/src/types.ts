@@ -31,6 +31,21 @@ export interface SimilarResult {
   compared_at?: string
 }
 
+export interface SubCategoryStat {
+  detection_type: string
+  sub_category: string
+  count: number
+}
+
+export interface ClassifyProgress {
+  done: number
+  total: number
+  event_id?: string
+  detection_type?: string
+  sub_category?: string
+  finished: boolean
+}
+
 export interface Summary {
   total_events: number;
   snapshots: number;

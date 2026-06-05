@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { eventApi } from './api'
-import type { Summary, DetectionEvent, SimilarResult } from './types'
+import type { Summary, DetectionEvent, SimilarResult, SubCategoryStat, ClassifyProgress } from './types'
 import './index.css'
 
 const WS_URL = 'ws://localhost:8000/ws'
@@ -152,6 +152,10 @@ function App() {
   const [editingType, setEditingType] = useState(false)
   const [savingType, setSavingType] = useState(false)
   const [activeTab, setActiveTab] = useState<'events' | 'stats'>('events')
+  const [subCategoryStats, setSubCategoryStats] = useState<SubCategoryStat[]>([])
+  const [classifyProgress, setClassifyProgress] = useState<ClassifyProgress | null>(null)
+  const [classifyLoading, setClassifyLoading] = useState(false)
+  const classifySourceRef = useRef<EventSource | null>(null)
   const [similarResults, setSimilarResults] = useState<SimilarResult[]>([])
   const [similarLoading, setSimilarLoading] = useState(false)
   const [similarDone, setSimilarDone] = useState(0)
@@ -179,6 +183,38 @@ function App() {
         .catch(() => {})
     }
   }, [selectedEvent?.event_id])
+
+  useEffect(() => {
+    if (activeTab === 'stats') {
+      eventApi.getSubCategoryStats().then(setSubCategoryStats).catch(() => {})
+    }
+  }, [activeTab])
+
+  const handleClassify = useCallback((detectionType?: string) => {
+    if (classifySourceRef.current) classifySourceRef.current.close()
+    setClassifyLoading(true)
+    setClassifyProgress(null)
+
+    const url = detectionType
+      ? `${API_BASE}/api/stats/classify/stream?detection_type=${encodeURIComponent(detectionType)}`
+      : `${API_BASE}/api/stats/classify/stream`
+    const source = new EventSource(url)
+    classifySourceRef.current = source
+
+    source.onmessage = (e) => {
+      const data: ClassifyProgress = JSON.parse(e.data)
+      setClassifyProgress(data)
+      if (data.finished) {
+        setClassifyLoading(false)
+        source.close()
+        eventApi.getSubCategoryStats().then(setSubCategoryStats).catch(() => {})
+      }
+    }
+    source.onerror = () => {
+      setClassifyLoading(false)
+      source.close()
+    }
+  }, [])
 
   const handleFindSimilar = useCallback(() => {
     if (!selectedEvent) return
@@ -440,11 +476,164 @@ function App() {
           ))}
         </div>
 
-        {activeTab === 'stats' && (
-          <div className="flex items-center justify-center h-64 text-slate-500 text-sm bg-slate-800 rounded-xl border border-slate-700">
-            統計機能は今後実装予定です
-          </div>
-        )}
+        {activeTab === 'stats' && (() => {
+          const CAT_LABEL: Record<string, string> = {
+            person: '人', car: '車', motorcycle: 'バイク',
+            bicycle: '自転車', pet: 'ペット', other: 'その他',
+          }
+          const CAT_COLOR: Record<string, string> = {
+            person: 'bg-emerald-500', car: 'bg-sky-500', motorcycle: 'bg-orange-500',
+            bicycle: 'bg-yellow-500', pet: 'bg-violet-500', other: 'bg-slate-500',
+          }
+          const SUB_COLORS = [
+            'bg-sky-400', 'bg-emerald-400', 'bg-orange-400', 'bg-violet-400',
+            'bg-rose-400', 'bg-teal-400', 'bg-amber-400', 'bg-indigo-400',
+          ]
+          // ai/sub_category_client.py の SUB_CATEGORIES と同期
+          const SUB_CATEGORY_DEFS: Record<string, string[]> = {
+            person:     ['子供', '学生', '成人（男性）', '成人（女性）', '高齢者', 'グループ', '不明'],
+            car:        ['軽自動車', '軽トラック', 'セダン/ハッチバック', 'SUV', 'ミニバン/ワンボックス', 'バン（商用）', 'トラック', 'バス', '不明'],
+            motorcycle: ['スクーター', 'ビッグスクーター', 'ネイキッド', 'スポーツ（フルカウル）', 'クルーザー（アメリカン）', 'オフロード', 'アドベンチャー', '不明'],
+            bicycle:    ['シティサイクル', '電動アシスト', 'ロードバイク', 'マウンテンバイク', 'クロスバイク', '子供用/その他', '不明'],
+            pet:        ['犬', '猫', 'その他動物', '不明'],
+          }
+          // 定義済みカテゴリはゼロ補完、その他は動的
+          const fillRows = (cat: string) => {
+            const defs = SUB_CATEGORY_DEFS[cat]
+            const statsMap = Object.fromEntries(
+              subCategoryStats.filter(s => s.detection_type === cat).map(s => [s.sub_category, s.count])
+            )
+            if (defs) {
+              return defs
+                .map(sub => ({ sub_category: sub, count: statsMap[sub] ?? 0 }))
+                .sort((a, b) => b.count - a.count)
+            }
+            // その他: 動的（出現したものだけ表示）
+            return subCategoryStats
+              .filter(s => s.detection_type === cat)
+              .sort((a, b) => b.count - a.count)
+          }
+
+          const ProgressBar = () => classifyProgress ? (
+            <div className="mb-5">
+              <div className="flex justify-between text-xs text-slate-400 mb-1">
+                <span>{classifyProgress.done} / {classifyProgress.total} 件分類済み</span>
+                {classifyProgress.sub_category && (
+                  <span className="text-slate-300">
+                    最新: {classifyProgress.sub_category}
+                  </span>
+                )}
+              </div>
+              <div className="w-full bg-slate-700 rounded-full h-1.5">
+                <div
+                  className="bg-sky-500 h-1.5 rounded-full transition-all"
+                  style={{ width: classifyProgress.total > 0 ? `${(classifyProgress.done / classifyProgress.total) * 100}%` : '0%' }}
+                />
+              </div>
+            </div>
+          ) : null
+
+          // 個別カテゴリ選択時: そのカテゴリのみ・サブカテゴリ色分け・分類ボタンあり
+          if (activeFilter !== null) {
+            const rows = fillRows(activeFilter)
+            const maxCount = Math.max(...rows.map(r => r.count), 1)
+            return (
+              <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 text-white">
+                <div className="flex items-center justify-between mb-5">
+                  <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">
+                    {CAT_LABEL[activeFilter] ?? activeFilter} サブカテゴリ統計
+                  </h2>
+                  <button
+                    onClick={() => handleClassify(activeFilter)}
+                    disabled={classifyLoading}
+                    className="text-xs text-sky-400 hover:text-sky-300 border border-sky-800 hover:border-sky-600 px-3 py-1.5 rounded-lg transition disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {classifyLoading && (
+                      <span className="w-3 h-3 border-2 border-sky-400/40 border-t-sky-400 rounded-full animate-spin" />
+                    )}
+                    {classifyLoading ? '分類中...' : 'サブカテゴリ分類を実行'}
+                  </button>
+                </div>
+                <ProgressBar />
+                {rows.length === 0 ? (
+                  <div className="text-center text-slate-500 text-sm py-16">
+                    「サブカテゴリ分類を実行」ボタンを押すと集計が表示されます
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {rows.map((row, i) => (
+                      <div key={row.sub_category}>
+                        <div className="flex justify-between text-sm mb-1">
+                          <span className="flex items-center gap-2 text-slate-200">
+                            <span className={`inline-block w-2.5 h-2.5 rounded-sm ${SUB_COLORS[i % SUB_COLORS.length]}`} />
+                            {row.sub_category}
+                          </span>
+                          <span className="text-slate-400">{row.count}</span>
+                        </div>
+                        <div className="w-full bg-slate-700 rounded-full h-3">
+                          <div
+                            className={`${SUB_COLORS[i % SUB_COLORS.length]} h-3 rounded-full transition-all`}
+                            style={{ width: `${(row.count / maxCount) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          }
+
+          // すべて選択時: 全カテゴリをグリッド表示・分類ボタンなし
+          const CAT_ORDER = ['person', 'car', 'motorcycle', 'bicycle', 'pet', 'other']
+          const categories = CAT_ORDER.filter(cat =>
+            subCategoryStats.some(s => s.detection_type === cat)
+          )
+          return (
+            <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 text-white">
+              <div className="mb-5">
+                <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">サブカテゴリ統計</h2>
+              </div>
+              <ProgressBar />
+              {categories.length === 0 ? (
+                <div className="text-center text-slate-500 text-sm py-16">
+                  カテゴリを選択して「サブカテゴリ分類を実行」ボタンを押してください
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-5">
+                  {categories.map(cat => {
+                    const rows = fillRows(cat)
+                    const maxCount = Math.max(...rows.map(r => r.count), 1)
+                    const barColor = CAT_COLOR[cat] ?? 'bg-slate-500'
+                    return (
+                      <div key={cat} className="bg-slate-900 rounded-lg p-4">
+                        <h3 className="text-xs font-semibold text-slate-400 uppercase mb-3">
+                          {CAT_LABEL[cat] ?? cat}
+                        </h3>
+                        <div className="space-y-2">
+                          {rows.map(row => (
+                            <div key={row.sub_category}>
+                              <div className="flex justify-between text-xs mb-0.5">
+                                <span className="text-slate-300">{row.sub_category}</span>
+                                <span className="text-slate-400">{row.count}</span>
+                              </div>
+                              <div className="w-full bg-slate-700 rounded-full h-2">
+                                <div
+                                  className={`${barColor} h-2 rounded-full transition-all`}
+                                  style={{ width: `${(row.count / maxCount) * 100}%` }}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )
+        })()}
 
         {activeTab === 'events' && <div className="grid grid-cols-3 gap-5">
           <div className="col-span-2 flex flex-col gap-3">

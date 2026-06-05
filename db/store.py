@@ -19,7 +19,20 @@ class EventStore:
         self._engine = create_engine(f"sqlite:///{db_path}", echo=False)
         Base.metadata.create_all(self._engine)
         self._Session = sessionmaker(bind=self._engine)
+        self._migrate()
         logger.info(f"EventStore initialized: {db_path}")
+
+    def _migrate(self):
+        """既存DBへのカラム追加マイグレーション（冪等）"""
+        with self._engine.connect() as conn:
+            try:
+                conn.execute(__import__("sqlalchemy").text(
+                    "ALTER TABLE detection_events ADD COLUMN sub_category VARCHAR(64)"
+                ))
+                conn.commit()
+                logger.info("Migration: sub_category column added")
+            except Exception:
+                pass  # 既にカラムが存在する場合はスキップ
 
     @contextmanager
     def _session(self):
@@ -372,3 +385,52 @@ class EventStore:
             )
             s.expunge_all()
             return rows
+
+    # ------------------------------------------------------------------ #
+    #  サブカテゴリ分類                                                    #
+    # ------------------------------------------------------------------ #
+
+    def get_unclassified_events(self, detection_type: str | None = None) -> list[DetectionEventRecord]:
+        """sub_category が未設定のイベントを返す（スナップショットあり限定・カテゴリ絞り込み可）"""
+        with self._session() as s:
+            q = (
+                s.query(DetectionEventRecord)
+                .filter(
+                    DetectionEventRecord.sub_category.is_(None),
+                    DetectionEventRecord.snapshot_path.isnot(None),
+                )
+            )
+            if detection_type:
+                q = q.filter(DetectionEventRecord.detection_type == detection_type)
+            rows = q.order_by(desc(DetectionEventRecord.started_at)).all()
+            s.expunge_all()
+            return rows
+
+    def update_sub_category(self, event_id: str, sub_category: str):
+        """イベントのサブカテゴリを更新する"""
+        with self._session() as s:
+            s.query(DetectionEventRecord).filter_by(event_id=event_id).update(
+                {"sub_category": sub_category}
+            )
+
+    def get_sub_category_stats(self) -> list[dict]:
+        """カテゴリ×サブカテゴリの件数集計を返す"""
+        from sqlalchemy import func as _func
+        with self._session() as s:
+            rows = (
+                s.query(
+                    DetectionEventRecord.detection_type,
+                    DetectionEventRecord.sub_category,
+                    _func.count().label("count"),
+                )
+                .filter(DetectionEventRecord.sub_category.isnot(None))
+                .group_by(
+                    DetectionEventRecord.detection_type,
+                    DetectionEventRecord.sub_category,
+                )
+                .all()
+            )
+            return [
+                {"detection_type": r.detection_type, "sub_category": r.sub_category, "count": r.count}
+                for r in rows
+            ]

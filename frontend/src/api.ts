@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { DetectionEvent, EventsListResponse, SimilarResult, Summary } from './types';
+import type { DetectionEvent, EventsListResponse, SimilarResult, SubCategoryStat, Summary } from './types';
 
 const API_BASE = 'http://localhost:8000';
 
@@ -35,6 +35,11 @@ export const eventApi = {
 
   getSimilarities: async (eventId: string): Promise<SimilarResult[]> => {
     const res = await api.get(`/api/events/${eventId}/similarities`);
+    return res.data;
+  },
+
+  getSubCategoryStats: async (): Promise<SubCategoryStat[]> => {
+    const res = await api.get('/api/stats/sub-categories');
     return res.data;
   },
 };

@@ -37,6 +37,7 @@ class DetectionEventRecord(Base):
     clip_path = Column(String(512))
 
     detections_json = Column(JSON)            # 検出ボックス生データ
+    sub_category = Column(String(64))         # サブカテゴリ（LLM分類結果）
 
     __table_args__ = (
         Index("ix_events_started_type", "started_at", "detection_type"),
