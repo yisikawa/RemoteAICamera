@@ -28,6 +28,11 @@ export const eventApi = {
     await api.delete(`/api/events/${eventId}`);
   },
 
+  deleteOldEvents: async (days = 3): Promise<{ deleted: number; days: number }> => {
+    const res = await api.delete('/api/events/old', { params: { days } });
+    return res.data;
+  },
+
   updateEventType: async (eventId: string, detectionType: string): Promise<DetectionEvent> => {
     const res = await api.patch(`/api/events/${eventId}`, { detection_type: detectionType });
     return res.data;

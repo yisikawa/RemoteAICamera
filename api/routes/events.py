@@ -157,6 +157,15 @@ def update_event(event_id: str, body: EventUpdateRequest, store: EventStore = De
     return _event_to_response(updated)
 
 
+@router.delete("/old", status_code=200)
+def delete_old_events(days: int = 3, store: EventStore = Depends(get_event_store)):
+    """指定日数より古いイベントとファイルを一括削除する"""
+    count = store.delete_events_older_than(days)
+    from api.ws_manager import manager
+    manager.broadcast_from_thread({"type": "bulk_deleted", "count": count, "days": days})
+    return {"deleted": count, "days": days}
+
+
 @router.delete("/{event_id}", status_code=204)
 def delete_event(event_id: str, store: EventStore = Depends(get_event_store)):
     """イベントとファイルを削除する"""

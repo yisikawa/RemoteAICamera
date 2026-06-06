@@ -27,20 +27,14 @@ COCO_CLASSES: dict[int, str] = {i: name for i, name in enumerate([
 
 # COCO class_id → detection_type カテゴリマッピング
 CATEGORY_MAP: dict[int, str] = {
-    0:  "person",
-    1:  "bicycle",
-    2:  "car",
-    3:  "motorcycle",
-    5:  "car",        # bus
-    7:  "car",        # truck
-    15: "pet",        # cat
-    16: "pet",        # dog
-    17: "pet",        # horse
-    18: "pet",        # sheep
-    19: "pet",        # cow
-    20: "pet",        # elephant
-    21: "pet",        # bear
-    23: "pet",        # giraffe
+    0:  "person",      # person
+    1:  "bicycle",     # bicycle
+    2:  "car",         # car
+    3:  "motorcycle",  # motorcycle
+    5:  "car",         # bus
+    7:  "car",         # truck
+    15: "pet",         # cat
+    16: "pet",         # dog
 }
 # 上記以外は "other"
 

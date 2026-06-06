@@ -99,6 +99,44 @@ GPU: イベント時のみ使用（常時稼働廃止）
 
 ---
 
+### カテゴリ分類仕様（`pipeline/detector.py` CATEGORY_MAP）
+
+YOLOv8 は Microsoft COCO データセットの80クラスを検出する。COCO とは物体認識モデルの学習用に公開された標準データセットで、各物体に class_id（番号）が割り振られている。`CATEGORY_MAP` はその class_id をこのシステムの6カテゴリに対応付けたものである。
+
+#### COCO class_id → カテゴリ対応表
+
+| class_id | COCO名 | カテゴリ |
+|---|---|---|
+| 0 | person | 人 (person) |
+| 1 | bicycle | 自転車 (bicycle) |
+| 2 | car | 車 (car) |
+| 3 | motorcycle | バイク (motorcycle) |
+| 5 | bus | 車 (car) |
+| 7 | truck | 車 (car) |
+| 15 | cat | ペット (pet) |
+| 16 | dog | ペット (pet) |
+| 上記以外の全クラス | — | その他 (other) |
+
+- `target_classes` は config.yaml に記載しない（空 = YOLO全80クラス検出）
+- カテゴリへの振り分けは `CATEGORY_MAP` のみで制御する
+
+#### 複数物体が検出された場合の優先順位
+
+1フレームで複数カテゴリが検出された場合、**優先度が最も高いカテゴリ1つ**が `detection_type` になる（`pipeline/clip_analyzer.py` `_dominant_category()`）。
+
+| 優先度 | カテゴリ |
+|---|---|
+| 5（最高） | ペット (pet) |
+| 4 | バイク (motorcycle) |
+| 3 | 自転車 (bicycle) |
+| 2 | 人 (person) |
+| 1 | 車 (car) |
+| 0（最低） | その他 (other) |
+
+例: 人と犬が同時に映った場合 → pet(5) > person(2) のため **「ペット」** に分類される。
+
+---
+
 ### ~~Phase 2: 認識機能~~ ❌ 廃止 (2026-06-04)
 
 **廃止理由:**
