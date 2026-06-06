@@ -141,6 +141,31 @@ class EventStore:
         logger.info(f"Event deleted: {event_id}")
         return True
 
+    def delete_events_older_than(self, days: int) -> int:
+        """指定日数より古いイベントとその関連ファイルを一括削除する"""
+        from datetime import timedelta
+        cutoff = datetime.now() - timedelta(days=days)
+        with self._session() as s:
+            records = s.query(DetectionEventRecord).filter(
+                DetectionEventRecord.started_at < cutoff
+            ).all()
+            count = 0
+            for record in records:
+                for path_str in (record.snapshot_path, record.clip_path):
+                    if path_str:
+                        p = Path(path_str)
+                        if p.exists():
+                            p.unlink()
+                s.query(Snapshot).filter_by(event_id=record.event_id).delete()
+                s.query(EventSimilarity).filter(
+                    or_(EventSimilarity.event_id_a == record.event_id,
+                        EventSimilarity.event_id_b == record.event_id)
+                ).delete(synchronize_session=False)
+                s.delete(record)
+                count += 1
+        logger.info(f"Bulk deleted {count} events older than {days} days (cutoff: {cutoff})")
+        return count
+
     def update_event_detection_type(self, event_id: str, detection_type: str):
         with self._session() as s:
             record = s.query(DetectionEventRecord).filter_by(event_id=event_id).first()
@@ -322,12 +347,10 @@ class EventStore:
                 q = q.filter(DetectionEventRecord.started_at <= to_dt)
 
             total = q.count()
-            rows = (
-                q.order_by(desc(DetectionEventRecord.started_at))
-                .offset(offset)
-                .limit(limit)
-                .all()
-            )
+            q = q.order_by(desc(DetectionEventRecord.started_at))
+            if limit > 0:
+                q = q.offset(offset).limit(limit)
+            rows = q.all()
             s.expunge_all()
             return rows, total
 

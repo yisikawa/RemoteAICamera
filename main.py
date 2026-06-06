@@ -85,8 +85,9 @@ def handle_clip(
             result.best_frame, event_id=event_id, prefix=cam_cfg.name
         )
         audio_wav = capture.get_wav_segment(frames_as_list[0][1], frames_as_list[-1][1])
+        actual_fps = capture.fps if capture.fps > 1.0 else 15.0
         clip_path = file_store.save_clip(
-            frames_as_list, event_id=event_id, fps=15.0, audio_wav=audio_wav
+            frames_as_list, event_id=event_id, fps=actual_fps, audio_wav=audio_wav
         )
 
         event_store.save_event(

@@ -147,6 +147,9 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [confirmTarget, setConfirmTarget] = useState<DetectionEvent | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [showOldDeleteConfirm, setShowOldDeleteConfirm] = useState(false)
+  const [deletingOld, setDeletingOld] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
   const [activeFilter, setActiveFilter] = useState<string | null>(null)
   const [wsConnected, setWsConnected] = useState(false)
   const [editingType, setEditingType] = useState(false)
@@ -268,7 +271,7 @@ function App() {
       try {
         const [summaryData, eventsData] = await Promise.all([
           eventApi.getSummary(),
-          eventApi.listEvents(500, 0),
+          eventApi.listEvents(0, 0),
         ])
         setSummary(summaryData)
         setEvents(eventsData.items)
@@ -363,6 +366,32 @@ function App() {
     }
   }
 
+  const showToast = (msg: string) => {
+    setToast(msg)
+    setTimeout(() => setToast(null), 4000)
+  }
+
+  const handleDeleteOld = async () => {
+    setDeletingOld(true)
+    try {
+      const result = await eventApi.deleteOldEvents(3)
+      setEvents(prev => prev.filter(e => {
+        const d = new Date(e.started_at)
+        return (Date.now() - d.getTime()) < 3 * 24 * 60 * 60 * 1000
+      }))
+      setSelectedEvent(null)
+      setShowOldDeleteConfirm(false)
+      const updated = await eventApi.getSummary()
+      setSummary(updated)
+      showToast(result.deleted > 0 ? `${result.deleted} 件のデータを削除しました` : '削除対象はありませんでした')
+    } catch {
+      setShowOldDeleteConfirm(false)
+      showToast('削除中にエラーが発生しました')
+    } finally {
+      setDeletingOld(false)
+    }
+  }
+
   const handleDeleteConfirm = async () => {
     if (!confirmTarget) return
     setDeleting(true)
@@ -371,6 +400,8 @@ function App() {
       setEvents(prev => prev.filter(e => e.event_id !== confirmTarget.event_id))
       setSelectedEvent(null)
       setConfirmTarget(null)
+      const updated = await eventApi.getSummary()
+      setSummary(updated)
     } catch {
       setConfirmTarget(null)
     } finally {
@@ -398,6 +429,12 @@ function App() {
 
   return (
     <div className="min-h-screen bg-slate-900 p-6">
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-xl bg-slate-700 border border-slate-500 text-white text-sm shadow-xl">
+          {toast}
+        </div>
+      )}
+
       {confirmTarget && (
         <ConfirmModal
           eventId={confirmTarget.event_id}
@@ -407,10 +444,45 @@ function App() {
         />
       )}
 
+      {showOldDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl p-6 w-80">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-9 h-9 rounded-full bg-orange-500/20 flex items-center justify-center text-orange-400 text-lg">🗑</div>
+              <h3 className="text-white font-semibold text-base">古いデータを削除</h3>
+            </div>
+            <p className="text-slate-300 text-sm mb-3">3日以上前のイベントをすべて削除します。</p>
+            <p className="text-slate-400 text-xs mb-5">スナップショット・クリップ動画・類似判定データも削除されます。この操作は取り消せません。</p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setShowOldDeleteConfirm(false)}
+                disabled={deletingOld}
+                className="px-4 py-2 text-sm rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 transition disabled:opacity-50"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={handleDeleteOld}
+                disabled={deletingOld}
+                className="px-4 py-2 text-sm rounded-lg bg-orange-600 hover:bg-orange-500 text-white font-medium transition disabled:opacity-50"
+              >
+                {deletingOld ? '削除中...' : '削除する'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-7xl mx-auto">
         <div className="flex items-center gap-3 mb-6">
           <h1 className="text-2xl font-bold text-white tracking-tight">RemoteAICamera</h1>
-          <span className="text-xs text-slate-500">最新 500 件表示</span>
+          <span className="text-xs text-slate-500">全件表示</span>
+          <button
+            onClick={() => setShowOldDeleteConfirm(true)}
+            className="text-xs px-3 py-1 rounded-lg bg-slate-700 hover:bg-orange-700 text-slate-300 hover:text-white transition"
+          >
+            3日以上前を削除
+          </button>
           <span className={`ml-auto flex items-center gap-1.5 text-xs ${wsConnected ? 'text-emerald-400' : 'text-slate-500'}`}>
             <span className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
             {wsConnected ? 'LIVE' : '接続中...'}
