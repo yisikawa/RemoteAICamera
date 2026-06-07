@@ -1112,6 +1112,7 @@ function App() {
                         onBlur={() => setEditingSubCat(false)}
                         className="text-xs bg-slate-700 text-white rounded px-1 py-0.5 border border-slate-500 outline-none w-full"
                       >
+                        <option value="">— 選択 —</option>
                         {(SUB_CATEGORY_OPTIONS[selectedEvent.detection_type] ?? []).map(s => (
                           <option key={s} value={s}>{s}</option>
                         ))}
