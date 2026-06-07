@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { DetectionEvent, EventsListResponse, SimilarResult, SubCategoryStat, Summary } from './types';
+import type { DetectionEvent, EventsListResponse, SimilarResult, SubCategoryStat, Summary, DailyStat, DailySubStat } from './types';
 
 const API_BASE = 'http://localhost:8000';
 
@@ -38,6 +38,11 @@ export const eventApi = {
     return res.data;
   },
 
+  updateEventSubCategory: async (eventId: string, subCategory: string): Promise<DetectionEvent> => {
+    const res = await api.patch(`/api/events/${eventId}`, { sub_category: subCategory });
+    return res.data;
+  },
+
   getSimilarities: async (eventId: string): Promise<SimilarResult[]> => {
     const res = await api.get(`/api/events/${eventId}/similarities`);
     return res.data;
@@ -45,6 +50,16 @@ export const eventApi = {
 
   getSubCategoryStats: async (): Promise<SubCategoryStat[]> => {
     const res = await api.get('/api/stats/sub-categories');
+    return res.data;
+  },
+
+  getDailyStats: async (days = 14): Promise<DailyStat[]> => {
+    const res = await api.get('/api/stats/daily', { params: { days } });
+    return res.data;
+  },
+
+  getDailySubStats: async (detectionType: string, days = 14): Promise<DailySubStat> => {
+    const res = await api.get('/api/stats/daily-sub', { params: { detection_type: detectionType, days } });
     return res.data;
   },
 };

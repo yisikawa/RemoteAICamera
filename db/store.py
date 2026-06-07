@@ -436,6 +436,74 @@ class EventStore:
                 {"sub_category": sub_category}
             )
 
+    def get_daily_sub_stats(self, detection_type: str, days: int = 14) -> dict:
+        """日別×サブカテゴリの件数集計（直近 days 日分）"""
+        from datetime import timedelta
+        from sqlalchemy import func as _func
+        cutoff = datetime.now() - timedelta(days=days)
+        with self._session() as s:
+            rows = (
+                s.query(
+                    _func.date(DetectionEventRecord.started_at).label("date"),
+                    DetectionEventRecord.sub_category,
+                    _func.count().label("count"),
+                )
+                .filter(
+                    DetectionEventRecord.started_at >= cutoff,
+                    DetectionEventRecord.detection_type == detection_type,
+                    DetectionEventRecord.sub_category.isnot(None),
+                )
+                .group_by(
+                    _func.date(DetectionEventRecord.started_at),
+                    DetectionEventRecord.sub_category,
+                )
+                .order_by(_func.date(DetectionEventRecord.started_at))
+                .all()
+            )
+        dates = sorted(set(str(r.date) for r in rows))
+        sub_cats = list(dict.fromkeys(r.sub_category for r in rows if r.sub_category))
+        pivot: dict[str, dict[str, int]] = {s: {d: 0 for d in dates} for s in sub_cats}
+        for r in rows:
+            if r.sub_category:
+                pivot[r.sub_category][str(r.date)] = r.count
+        return {
+            "dates": dates,
+            "sub_categories": {s: [pivot[s][d] for d in dates] for s in sub_cats},
+        }
+
+    def get_daily_stats(self, days: int = 14) -> list[dict]:
+        """日別×カテゴリの件数集計を返す（直近 days 日分）"""
+        from datetime import timedelta
+        from sqlalchemy import func as _func, cast
+        from sqlalchemy import Date
+        cutoff = datetime.now() - timedelta(days=days)
+        categories = ["person", "car", "motorcycle", "bicycle", "pet", "other"]
+        with self._session() as s:
+            rows = (
+                s.query(
+                    _func.date(DetectionEventRecord.started_at).label("date"),
+                    DetectionEventRecord.detection_type,
+                    _func.count().label("count"),
+                )
+                .filter(DetectionEventRecord.started_at >= cutoff)
+                .group_by(
+                    _func.date(DetectionEventRecord.started_at),
+                    DetectionEventRecord.detection_type,
+                )
+                .order_by(_func.date(DetectionEventRecord.started_at))
+                .all()
+            )
+        # 日付×カテゴリのマップに変換
+        day_map: dict[str, dict] = {}
+        for r in rows:
+            d = str(r.date)
+            if d not in day_map:
+                day_map[d] = {cat: 0 for cat in categories}
+                day_map[d]["date"] = d
+            if r.detection_type in categories:
+                day_map[d][r.detection_type] = r.count
+        return sorted(day_map.values(), key=lambda x: x["date"])
+
     def get_sub_category_stats(self) -> list[dict]:
         """カテゴリ×サブカテゴリの件数集計を返す"""
         from sqlalchemy import func as _func
