@@ -360,7 +360,7 @@ function App() {
             eventApi.getEvent(msg.event_id).then(event => {
               setEvents(prev => {
                 if (prev.some(ev => ev.event_id === event.event_id)) return prev
-                return [event, ...prev].slice(0, 500)
+                return [event, ...prev]
               })
               eventApi.getSummary().then(setSummary).catch(() => {})
             }).catch(() => {})
