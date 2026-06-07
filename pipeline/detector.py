@@ -90,6 +90,22 @@ class DetectionResult:
         return len(self.detections) > 0
 
 
+@dataclass
+class DetectionEvent:
+    """1回の「通過イベント」を表す"""
+    event_id: str
+    started_at: float
+    ended_at: float
+    detection_type: str
+    best_detections: list[Detection]
+    frame_count: int
+    trigger_frame_id: int
+
+    @property
+    def duration_sec(self) -> float:
+        return self.ended_at - self.started_at
+
+
 class YOLODetector:
     """
     YOLOv8 推論ラッパー。

@@ -11,7 +11,7 @@ from loguru import logger
 
 from sqlalchemy import or_
 from .models import Base, DetectionEventRecord, EventSimilarity, KnownPerson, KnownVehicle, Snapshot
-from pipeline.event_filter import DetectionEvent
+from pipeline.detector import DetectionEvent
 
 
 class EventStore:
