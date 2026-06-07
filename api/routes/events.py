@@ -30,6 +30,7 @@ class DetectionEventResponse(BaseModel):
     snapshot_url: Optional[str]
     clip_url: Optional[str]
     frame_count: Optional[int]
+    sub_category: Optional[str]
 
     class Config:
         from_attributes = True
@@ -83,6 +84,7 @@ def _event_to_response(record) -> DetectionEventResponse:
         snapshot_url=_path_to_url(record.snapshot_path),
         clip_url=_path_to_url(record.clip_path),
         frame_count=record.frame_count,
+        sub_category=record.sub_category,
     )
 
 
@@ -135,25 +137,29 @@ def get_event(event_id: str, store: EventStore = Depends(get_event_store)):
 
 
 class EventUpdateRequest(BaseModel):
-    detection_type: str
+    detection_type: Optional[str] = None
+    sub_category: Optional[str] = None
 
 
 @router.patch("/{event_id}", response_model=DetectionEventResponse)
 def update_event(event_id: str, body: EventUpdateRequest, store: EventStore = Depends(get_event_store)):
-    """種別を手動修正する"""
+    """種別・サブカテゴリを手動修正する"""
     record = store.get_event_by_id(event_id)
     if not record:
         raise HTTPException(status_code=404, detail="Event not found")
-    old_type = record.detection_type
-    store.update_event_detection_type(event_id, body.detection_type)
+    if body.detection_type is not None and body.detection_type != record.detection_type:
+        old_type = record.detection_type
+        store.update_event_detection_type(event_id, body.detection_type)
+        from api.ws_manager import manager
+        manager.broadcast_from_thread({
+            "type": "type_updated",
+            "event_id": event_id,
+            "detection_type": body.detection_type,
+            "old_detection_type": old_type,
+        })
+    if body.sub_category is not None:
+        store.update_sub_category(event_id, body.sub_category)
     updated = store.get_event_by_id(event_id)
-    from api.ws_manager import manager
-    manager.broadcast_from_thread({
-        "type": "type_updated",
-        "event_id": event_id,
-        "detection_type": body.detection_type,
-        "old_detection_type": old_type,
-    })
     return _event_to_response(updated)
 
 

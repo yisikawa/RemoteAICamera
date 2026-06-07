@@ -14,6 +14,7 @@ export interface DetectionEvent {
   snapshot_url: string | null;
   clip_url: string | null;
   frame_count: number | null;
+  sub_category: string | null;
 }
 
 export interface EventsListResponse {
@@ -44,6 +45,21 @@ export interface ClassifyProgress {
   detection_type?: string
   sub_category?: string
   finished: boolean
+}
+
+export interface DailySubStat {
+  dates: string[]
+  sub_categories: Record<string, number[]>
+}
+
+export interface DailyStat {
+  date: string
+  person: number
+  car: number
+  motorcycle: number
+  bicycle: number
+  pet: number
+  other: number
 }
 
 export interface Summary {

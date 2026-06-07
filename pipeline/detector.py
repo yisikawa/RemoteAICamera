@@ -33,6 +33,7 @@ CATEGORY_MAP: dict[int, str] = {
     3:  "motorcycle",  # motorcycle
     5:  "car",         # bus
     7:  "car",         # truck
+    14: "pet",         # bird
     15: "pet",         # cat
     16: "pet",         # dog
 }

@@ -1,10 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { eventApi } from './api'
-import type { Summary, DetectionEvent, SimilarResult, SubCategoryStat, ClassifyProgress } from './types'
+import type { Summary, DetectionEvent, SimilarResult, SubCategoryStat, ClassifyProgress, DailyStat, DailySubStat } from './types'
 import './index.css'
 
 const WS_URL = 'ws://localhost:8000/ws'
 const API_BASE = 'http://localhost:8000'
+
+const SUB_CATEGORY_OPTIONS: Record<string, string[]> = {
+  person:     ['子供', '学生', '成人（男性）', '成人（女性）', '高齢者', 'グループ', '不明'],
+  car:        ['軽自動車', '軽トラック', 'セダン/ハッチバック', 'SUV', 'ミニバン/ワンボックス', 'バン（商用）', 'トラック', 'バス', '不明'],
+  motorcycle: ['スクーター', 'ビッグスクーター', 'ネイキッド', 'スポーツ（フルカウル）', 'クルーザー（アメリカン）', 'オフロード', 'アドベンチャー', '不明'],
+  bicycle:    ['シティサイクル', '電動アシスト', 'ロードバイク', 'マウンテンバイク', 'クロスバイク', '子供用/その他', '不明'],
+  pet:        ['犬', '猫', 'その他動物', '不明'],
+}
 
 const TYPE_COLOR: Record<string, string> = {
   person:     'bg-emerald-500',
@@ -76,22 +84,54 @@ function EventList({
   events,
   selectedId,
   onSelect,
+  showSubFilter,
 }: {
   cameraName: string
   events: DetectionEvent[]
   selectedId: string | null
   onSelect: (e: DetectionEvent) => void
+  showSubFilter: boolean
 }) {
+  const selectedRef = useRef<HTMLDivElement | null>(null)
+  const [subFilter, setSubFilter] = useState('')
+
+  useEffect(() => { setSubFilter('') }, [showSubFilter])
+
+  const subCategories = useMemo(() =>
+    Array.from(new Set(events.map(e => e.sub_category).filter(Boolean) as string[])).sort()
+  , [events])
+
+  const displayed = subFilter ? events.filter(e => e.sub_category === subFilter) : events
+
+  useEffect(() => {
+    selectedRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [selectedId])
+
   return (
     <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 text-white">
-      <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3">{cameraName}</h2>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">{cameraName}</h2>
+        {showSubFilter && subCategories.length > 0 && (
+          <select
+            value={subFilter}
+            onChange={e => setSubFilter(e.target.value)}
+            className="text-xs bg-slate-700 text-slate-200 rounded-lg px-2 py-1 border border-slate-600 outline-none cursor-pointer"
+          >
+            <option value="">すべて</option>
+            {subCategories.map(s => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        )}
+      </div>
       <div className="space-y-1 overflow-y-auto" style={{ maxHeight: '220px' }}>
-        {events.length === 0 ? (
+        {displayed.length === 0 ? (
           <p className="text-slate-500 text-sm py-2">イベントなし</p>
         ) : (
-          events.map(event => (
+          displayed.map(event => (
             <div
               key={event.event_id}
+              ref={event.event_id === selectedId ? selectedRef : null}
               onClick={() => onSelect(event)}
               className={`px-3 py-2.5 rounded-lg cursor-pointer transition-colors ${
                 event.event_id === selectedId
@@ -154,8 +194,13 @@ function App() {
   const [wsConnected, setWsConnected] = useState(false)
   const [editingType, setEditingType] = useState(false)
   const [savingType, setSavingType] = useState(false)
-  const [activeTab, setActiveTab] = useState<'events' | 'stats'>('events')
+  const [editingSubCat, setEditingSubCat] = useState(false)
+  const [savingSubCat, setSavingSubCat] = useState(false)
+  const [activeTab, setActiveTab] = useState<'events' | 'daily' | 'stats'>('events')
   const [subCategoryStats, setSubCategoryStats] = useState<SubCategoryStat[]>([])
+  const [dailyStats, setDailyStats] = useState<DailyStat[]>([])
+  const [dailyDays, setDailyDays] = useState(14)
+  const [dailySubStats, setDailySubStats] = useState<DailySubStat | null>(null)
   const [classifyProgress, setClassifyProgress] = useState<ClassifyProgress | null>(null)
   const [classifyLoading, setClassifyLoading] = useState(false)
   const classifySourceRef = useRef<EventSource | null>(null)
@@ -166,10 +211,13 @@ function App() {
 
   const unmountedRef = useRef(false)
   const similarSourceRef = useRef<EventSource | null>(null)
+  const filteredEventsRef = useRef<DetectionEvent[]>([])
 
   useEffect(() => {
     setEditingType(false)
     setSavingType(false)
+    setEditingSubCat(false)
+    setSavingSubCat(false)
     if (similarSourceRef.current) {
       similarSourceRef.current.close()
       similarSourceRef.current = null
@@ -188,10 +236,19 @@ function App() {
   }, [selectedEvent?.event_id])
 
   useEffect(() => {
-    if (activeTab === 'stats') {
+    if (activeTab === 'stats' || activeTab === 'daily') {
       eventApi.getSubCategoryStats().then(setSubCategoryStats).catch(() => {})
     }
-  }, [activeTab])
+    if (activeTab === 'daily') {
+      eventApi.getDailyStats(dailyDays).then(setDailyStats).catch(() => {})
+      if (activeFilter) {
+        setDailySubStats(null)
+        eventApi.getDailySubStats(activeFilter, dailyDays).then(setDailySubStats).catch(() => {})
+      } else {
+        setDailySubStats(null)
+      }
+    }
+  }, [activeTab, dailyDays, activeFilter])
 
   const handleClassify = useCallback((detectionType?: string) => {
     if (classifySourceRef.current) classifySourceRef.current.close()
@@ -366,6 +423,27 @@ function App() {
     }
   }
 
+  const handleSubCatChange = async (newSubCat: string) => {
+    if (!selectedEvent || newSubCat === (selectedEvent.sub_category ?? '')) {
+      setEditingSubCat(false)
+      return
+    }
+    setEditingSubCat(false)
+    setSavingSubCat(true)
+    const prev = selectedEvent
+    const updated = { ...selectedEvent, sub_category: newSubCat }
+    setSelectedEvent(updated)
+    setEvents(evs => evs.map(e => e.event_id === updated.event_id ? updated : e))
+    try {
+      await eventApi.updateEventSubCategory(selectedEvent.event_id, newSubCat)
+    } catch {
+      setSelectedEvent(prev)
+      setEvents(evs => evs.map(e => e.event_id === prev.event_id ? prev : e))
+    } finally {
+      setSavingSubCat(false)
+    }
+  }
+
   const showToast = (msg: string) => {
     setToast(msg)
     setTimeout(() => setToast(null), 4000)
@@ -409,6 +487,32 @@ function App() {
     }
   }
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (activeTab !== 'events') return
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
+      e.preventDefault()
+      const filtered = filteredEventsRef.current
+      if (filtered.length === 0) return
+      const currentCamera = selectedEvent?.event_id.split('_')[0]
+      const cameraEvents = currentCamera
+        ? filtered.filter(ev => ev.event_id.startsWith(currentCamera + '_'))
+        : filtered
+      const currentIdx = cameraEvents.findIndex(ev => ev.event_id === selectedEvent?.event_id)
+      if (e.key === 'ArrowDown') {
+        const nextIdx = currentIdx === -1 ? 0 : Math.min(currentIdx + 1, cameraEvents.length - 1)
+        setSelectedEvent(cameraEvents[nextIdx])
+      } else {
+        const nextIdx = currentIdx === -1 ? cameraEvents.length - 1 : Math.max(currentIdx - 1, 0)
+        setSelectedEvent(cameraEvents[nextIdx])
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [activeTab, selectedEvent?.event_id])
+
   if (loading) return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center text-slate-400">
       読み込み中...
@@ -423,6 +527,7 @@ function App() {
   const filteredEvents = activeFilter
     ? events.filter(e => e.detection_type === activeFilter)
     : events
+  filteredEventsRef.current = filteredEvents
 
   const cameras = Array.from(new Set(filteredEvents.map(e => e.event_id.split('_')[0]))).sort()
   const byCamera = (name: string) => filteredEvents.filter(e => e.event_id.startsWith(name + '_'))
@@ -532,6 +637,7 @@ function App() {
         <div className="flex gap-1 border-b border-slate-700 mb-5">
           {([
             { id: 'events', label: 'イベント一覧' },
+            { id: 'daily',  label: '日次集計' },
             { id: 'stats',  label: '統計' },
           ] as const).map(tab => (
             <button
@@ -547,6 +653,208 @@ function App() {
             </button>
           ))}
         </div>
+
+        {activeTab === 'daily' && (() => {
+          const CATS: { key: keyof DailyStat; label: string; color: string; barColor: string }[] = [
+            { key: 'person',     label: '人',     color: 'bg-emerald-500', barColor: 'bg-emerald-500' },
+            { key: 'car',        label: '車',     color: 'bg-sky-500',     barColor: 'bg-sky-500'     },
+            { key: 'motorcycle', label: 'バイク', color: 'bg-orange-500',  barColor: 'bg-orange-500'  },
+            { key: 'bicycle',    label: '自転車', color: 'bg-yellow-500',  barColor: 'bg-yellow-500'  },
+            { key: 'pet',        label: 'ペット', color: 'bg-violet-500',  barColor: 'bg-violet-500'  },
+            { key: 'other',      label: 'その他', color: 'bg-slate-500',   barColor: 'bg-slate-500'   },
+          ]
+          const SUB_COLORS = [
+            'bg-sky-400', 'bg-emerald-400', 'bg-orange-400', 'bg-violet-400',
+            'bg-rose-400', 'bg-teal-400', 'bg-amber-400', 'bg-indigo-400',
+          ]
+
+          const DailyBars = ({
+            cat, color, barHeight = 64,
+          }: {
+            cat: keyof DailyStat; color: string; barHeight?: number
+          }) => {
+            const values = dailyStats.map(d => d[cat] as number)
+            const maxVal = Math.max(...values, 1)
+            if (dailyStats.length === 0) return (
+              <div className="text-center text-slate-600 text-xs py-8">データなし</div>
+            )
+            return (
+              <div className="flex items-end gap-1" style={{ height: `${barHeight + 36}px` }}>
+                {dailyStats.map(d => {
+                  const v = d[cat] as number
+                  const pct = (v / maxVal) * 100
+                  const dateLabel = (d.date as string).slice(5)
+                  return (
+                    <div key={d.date as string} className="flex-1 flex flex-col items-center gap-1 min-w-0">
+                      <span className="text-slate-400 text-xs leading-none">{v > 0 ? v : ''}</span>
+                      <div className="w-full flex items-end" style={{ height: `${barHeight}px` }}>
+                        <div
+                          className={`w-full rounded-t ${color} transition-all`}
+                          style={{ height: `${pct}%`, minHeight: v > 0 ? '2px' : '0' }}
+                        />
+                      </div>
+                      <span className="text-slate-500 leading-none truncate w-full text-center text-xs">
+                        {dateLabel}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          }
+
+          const DaySelector = () => (
+            <select
+              value={dailyDays}
+              onChange={e => setDailyDays(Number(e.target.value))}
+              className="text-xs bg-slate-700 text-slate-200 rounded-lg px-2 py-1.5 border border-slate-600 outline-none"
+            >
+              <option value={7}>直近 7日</option>
+              <option value={14}>直近 14日</option>
+              <option value={30}>直近 30日</option>
+            </select>
+          )
+
+          // カテゴリ選択中: そのカテゴリのみ大きく + サブカテゴリ
+          if (activeFilter !== null) {
+            const cat = CATS.find(c => c.key === activeFilter)
+            if (!cat) return null
+            const values = dailyStats.map(d => d[cat.key] as number)
+            const total  = values.reduce((a, b) => a + b, 0)
+
+            return (
+              <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+                <div className="flex items-center justify-between mb-5">
+                  <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">
+                    日次集計 — {cat.label}
+                  </h2>
+                  <DaySelector />
+                </div>
+
+                {/* 日次ヒストグラム（大） */}
+                <div className="bg-slate-900 rounded-xl p-4 mb-4">
+                  <div className="flex justify-between items-center mb-3">
+                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{cat.label}</span>
+                    <span className="text-xs text-slate-500">合計 {total}</span>
+                  </div>
+                  <DailyBars cat={cat.key} color={cat.barColor} barHeight={120} />
+                </div>
+
+                {/* サブカテゴリ別ヒストグラム */}
+                <div className="bg-slate-900 rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                      サブカテゴリ別日次
+                    </h3>
+                    <button
+                      onClick={() => {
+                        handleClassify(activeFilter)
+                        if (activeFilter) {
+                          eventApi.getDailySubStats(activeFilter, dailyDays)
+                            .then(setDailySubStats).catch(() => {})
+                        }
+                      }}
+                      disabled={classifyLoading}
+                      className="text-xs text-sky-400 hover:text-sky-300 border border-sky-800 hover:border-sky-600 px-3 py-1.5 rounded-lg transition disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                      {classifyLoading && (
+                        <span className="w-3 h-3 border-2 border-sky-400/40 border-t-sky-400 rounded-full animate-spin" />
+                      )}
+                      {classifyLoading ? '分類中...' : 'サブカテゴリ分類を実行'}
+                    </button>
+                  </div>
+                  {classifyProgress && classifyLoading && (
+                    <div className="mb-4">
+                      <div className="flex justify-between text-xs text-slate-400 mb-1">
+                        <span>{classifyProgress.done} / {classifyProgress.total} 件分類済み</span>
+                        {classifyProgress.sub_category && (
+                          <span className="text-slate-300">最新: {classifyProgress.sub_category}</span>
+                        )}
+                      </div>
+                      <div className="w-full bg-slate-700 rounded-full h-1.5">
+                        <div
+                          className="bg-sky-500 h-1.5 rounded-full transition-all"
+                          style={{ width: classifyProgress.total > 0 ? `${(classifyProgress.done / classifyProgress.total) * 100}%` : '0%' }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {!dailySubStats || Object.keys(dailySubStats.sub_categories).length === 0 ? (
+                    <div className="text-center text-slate-500 text-sm py-8">
+                      「サブカテゴリ分類を実行」ボタンを押すと内訳が表示されます
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3">
+                      {(Object.entries(dailySubStats.sub_categories) as [string, number[]][]).map(([subCat, values], i) => {
+                        const maxV = Math.max(...values, 1)
+                        const total = values.reduce((a, b) => a + b, 0)
+                        const color = SUB_COLORS[i % SUB_COLORS.length]
+                        return (
+                          <div key={subCat} className="bg-slate-800 rounded-lg p-3">
+                            <div className="flex justify-between items-center mb-2">
+                              <span className="flex items-center gap-1.5 text-sm text-slate-200">
+                                <span className={`inline-block w-2.5 h-2.5 rounded-sm ${color}`} />
+                                {subCat}
+                              </span>
+                              <span className="text-xs text-slate-400">合計 {total}</span>
+                            </div>
+                            <div className="flex items-end gap-1" style={{ height: '80px' }}>
+                              {dailySubStats.dates.map((d, di) => {
+                                const v = values[di] ?? 0
+                                const pct = (v / maxV) * 100
+                                return (
+                                  <div key={d} className="flex-1 flex flex-col items-center min-w-0">
+                                    <span className="text-slate-400 leading-none mb-0.5 text-xs">
+                                      {v > 0 ? v : ''}
+                                    </span>
+                                    <div className="w-full flex items-end" style={{ height: '52px' }}>
+                                      <div
+                                        className={`w-full rounded-t ${color} transition-all`}
+                                        style={{ height: `${pct}%`, minHeight: v > 0 ? '2px' : '0' }}
+                                      />
+                                    </div>
+                                    <span className="text-slate-500 leading-none truncate w-full text-center mt-1"
+                                          style={{ fontSize: '10px' }}>
+                                      {d.slice(5)}
+                                    </span>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          }
+
+          // すべて: 6カテゴリをグリッド表示
+          return (
+            <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+              <div className="flex items-center justify-between mb-5">
+                <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">日次集計</h2>
+                <DaySelector />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                {CATS.map(c => {
+                  const values = dailyStats.map(d => d[c.key] as number)
+                  return (
+                    <div key={c.key} className="bg-slate-900 rounded-xl p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{c.label}</h3>
+                        <span className="text-xs text-slate-500">合計 {values.reduce((a, b) => a + b, 0)}</span>
+                      </div>
+                      <DailyBars cat={c.key} color={c.barColor} barHeight={64} />
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })()}
 
         {activeTab === 'stats' && (() => {
           const CAT_LABEL: Record<string, string> = {
@@ -716,6 +1024,7 @@ function App() {
                 events={byCamera(name)}
                 selectedId={selectedEvent?.event_id ?? null}
                 onSelect={setSelectedEvent}
+                showSubFilter={activeFilter !== null}
               />
             ))}
           </div>
@@ -790,6 +1099,35 @@ function App() {
                         className={`text-xs font-bold px-2 py-0.5 rounded-full text-white cursor-pointer hover:brightness-125 ${TYPE_COLOR[selectedEvent.detection_type] ?? 'bg-slate-500'}`}
                       >
                         {TYPE_LABEL[selectedEvent.detection_type] ?? selectedEvent.detection_type}
+                      </span>
+                    )}
+                  </div>
+                  <div className="bg-slate-900 rounded-lg px-3 py-2">
+                    <div className="text-xs text-slate-500 mb-0.5">サブカテゴリ</div>
+                    {editingSubCat ? (
+                      <select
+                        autoFocus
+                        defaultValue={selectedEvent.sub_category ?? ''}
+                        onChange={e => handleSubCatChange(e.target.value)}
+                        onBlur={() => setEditingSubCat(false)}
+                        className="text-xs bg-slate-700 text-white rounded px-1 py-0.5 border border-slate-500 outline-none w-full"
+                      >
+                        {(SUB_CATEGORY_OPTIONS[selectedEvent.detection_type] ?? []).map(s => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                    ) : savingSubCat ? (
+                      <span className="text-xs text-slate-400 flex items-center gap-1.5">
+                        <span className="w-3 h-3 border-2 border-slate-400/40 border-t-slate-400 rounded-full animate-spin" />
+                        保存中...
+                      </span>
+                    ) : (
+                      <span
+                        onClick={() => SUB_CATEGORY_OPTIONS[selectedEvent.detection_type] && setEditingSubCat(true)}
+                        title={SUB_CATEGORY_OPTIONS[selectedEvent.detection_type] ? 'クリックしてサブカテゴリを変更' : undefined}
+                        className={`text-xs text-slate-300 ${SUB_CATEGORY_OPTIONS[selectedEvent.detection_type] ? 'cursor-pointer hover:text-white' : ''}`}
+                      >
+                        {selectedEvent.sub_category ?? '—'}
                       </span>
                     )}
                   </div>

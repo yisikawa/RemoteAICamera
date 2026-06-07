@@ -18,6 +18,22 @@ def get_summary(store: EventStore = Depends(get_event_store)):
     return store.summary()
 
 
+@router.get("/daily")
+def get_daily_stats(days: int = 14, store: EventStore = Depends(get_event_store)):
+    """日別×カテゴリの件数集計（直近 days 日分）"""
+    return store.get_daily_stats(days=days)
+
+
+@router.get("/daily-sub")
+def get_daily_sub_stats(
+    detection_type: str,
+    days: int = 14,
+    store: EventStore = Depends(get_event_store),
+):
+    """日別×サブカテゴリの件数集計（detection_type 指定必須）"""
+    return store.get_daily_sub_stats(detection_type=detection_type, days=days)
+
+
 @router.get("/sub-categories")
 def get_sub_category_stats(store: EventStore = Depends(get_event_store)):
     """カテゴリ×サブカテゴリの件数集計を返す"""
