@@ -150,15 +150,10 @@ class RTSPCapture:
                 format="fltp", layout="mono", rate=self._sample_rate
             ) if audio_stream is not None else None
 
-            # 映像 PTS → wall clock 変換用
-            v_first_pts: Optional[int] = None
-            v_wall_start: float = 0.0
-            v_time_base = float(video_stream.time_base)
-
-            # 音声 PTS → wall clock 変換用
-            a_first_pts: Optional[int] = None
-            a_wall_start: float = 0.0
-            a_time_base = float(audio_stream.time_base) if audio_stream else 1.0
+            # タイムスタンプは time.time() を直接使用する。
+            # PTSベース計算（v_wall_start + (pts - first_pts) * time_base）は
+            # カメラのPTSクロックドリフトや time_base 不一致で長時間稼働時に
+            # 記録時刻がずれる問題があるため採用しない。
             a_chunk_size = int(self._sample_rate * 0.1)  # 100ms 単位
             a_buf = np.array([], dtype=np.float32)
             a_buf_start_ts: Optional[float] = None
@@ -176,13 +171,7 @@ class RTSPCapture:
                         continue
 
                     if packet.stream is video_stream:
-                        if frame.pts is None:
-                            ts = time.time()
-                        else:
-                            if v_first_pts is None:
-                                v_first_pts = frame.pts
-                                v_wall_start = time.time()
-                            ts = v_wall_start + (frame.pts - v_first_pts) * v_time_base
+                        ts = time.time()
 
                         img = frame.to_ndarray(format="bgr24")
                         self._frame_id += 1
@@ -194,10 +183,7 @@ class RTSPCapture:
                     elif packet.stream is audio_stream:
                         if frame.pts is None:
                             continue
-                        if a_first_pts is None:
-                            a_first_pts = frame.pts
-                            a_wall_start = time.time()
-                        frame_wall_ts = a_wall_start + (frame.pts - a_first_pts) * a_time_base
+                        frame_wall_ts = time.time()
 
                         for resampled in resampler.resample(frame):
                             pcm = resampled.to_ndarray().flatten()
