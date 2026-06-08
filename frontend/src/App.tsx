@@ -250,6 +250,15 @@ function App() {
     }
   }, [activeTab, dailyDays, activeFilter])
 
+  useEffect(() => {
+    eventApi.listEvents(0, 0).then(res => {
+      setEvents(res.items)
+      setSelectedEvent(prev =>
+        prev ? (res.items.find(e => e.event_id === prev.event_id) ?? prev) : prev
+      )
+    }).catch(() => {})
+  }, [activeTab, activeFilter])
+
   const handleClassify = useCallback((detectionType?: string) => {
     if (classifySourceRef.current) classifySourceRef.current.close()
     setClassifyLoading(true)
