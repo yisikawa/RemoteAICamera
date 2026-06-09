@@ -895,13 +895,67 @@ function App() {
             )
           }
 
-          // すべて: 6カテゴリをグリッド表示
+          // すべて: 積み上げ全体 + 6カテゴリグリッド
+          const allTotals = dailyStats.map(d =>
+            CATS.reduce((sum, c) => sum + (d[c.key] as number), 0)
+          )
+          const allMax = Math.max(...allTotals, 1)
+          const grandTotal = allTotals.reduce((a, b) => a + b, 0)
+
           return (
-            <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
-              <div className="flex items-center justify-between mb-5">
+            <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+              <div className="flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">日次集計</h2>
                 <DaySelector />
               </div>
+
+              {/* 全カテゴリ積み上げヒストグラム */}
+              <div className="bg-slate-900 rounded-xl p-4">
+                <div className="flex justify-between items-center mb-3">
+                  <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">すべて</span>
+                  <span className="text-xs text-slate-500">合計 {grandTotal}</span>
+                </div>
+                <div className="flex items-end gap-1" style={{ height: '156px' }}>
+                  {dailyStats.map((d, di) => {
+                    const total = allTotals[di]
+                    const dateLabel = (d.date as string).slice(5)
+                    return (
+                      <div key={d.date as string} className="flex-1 flex flex-col items-center gap-1 min-w-0">
+                        <span className="text-slate-400 text-xs leading-none">{total > 0 ? total : ''}</span>
+                        <div className="w-full flex flex-col-reverse" style={{ height: '120px' }}>
+                          {CATS.map(c => {
+                            const v = d[c.key] as number
+                            if (v === 0) return null
+                            const heightPct = (v / allMax) * 100
+                            return (
+                              <div
+                                key={c.key}
+                                className={`w-full ${c.barColor}`}
+                                style={{ height: `${heightPct}%`, minHeight: '2px' }}
+                                title={`${c.label}: ${v}`}
+                              />
+                            )
+                          })}
+                        </div>
+                        <span className="text-slate-500 leading-none truncate w-full text-center text-xs">
+                          {dateLabel}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+                {/* 凡例 */}
+                <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
+                  {CATS.map(c => (
+                    <span key={c.key} className="flex items-center gap-1 text-xs text-slate-400">
+                      <span className={`inline-block w-2.5 h-2.5 rounded-sm ${c.barColor}`} />
+                      {c.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* カテゴリ別グリッド */}
               <div className="grid grid-cols-2 gap-4">
                 {CATS.map(c => {
                   const values = dailyStats.map(d => d[c.key] as number)
