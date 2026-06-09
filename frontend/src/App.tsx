@@ -712,6 +712,61 @@ function App() {
             )
           }
 
+          const StackedDailyBars = ({ barHeight = 120 }: { barHeight?: number }) => {
+            if (!dailySubStats || Object.keys(dailySubStats.sub_categories).length === 0) {
+              const cat = CATS.find(c => c.key === activeFilter)
+              return cat ? <DailyBars cat={cat.key} color={cat.barColor} barHeight={barHeight} /> : null
+            }
+            const subEntries = Object.entries(dailySubStats.sub_categories) as [string, number[]][]
+            const dates = dailySubStats.dates
+            const totals = dates.map((_, di) =>
+              subEntries.reduce((sum, [, vals]) => sum + (vals[di] ?? 0), 0)
+            )
+            const maxVal = Math.max(...totals, 1)
+            return (
+              <div>
+                <div className="flex items-end gap-1" style={{ height: `${barHeight + 36}px` }}>
+                  {dates.map((date, di) => {
+                    const total = totals[di]
+                    const dateLabel = date.slice(5)
+                    return (
+                      <div key={date} className="flex-1 flex flex-col items-center gap-1 min-w-0">
+                        <span className="text-slate-400 text-xs leading-none">{total > 0 ? total : ''}</span>
+                        <div className="w-full flex flex-col-reverse" style={{ height: `${barHeight}px` }}>
+                          {subEntries.map(([subCat, vals], i) => {
+                            const v = vals[di] ?? 0
+                            if (v === 0) return null
+                            const heightPct = (v / maxVal) * 100
+                            return (
+                              <div
+                                key={subCat}
+                                className={`w-full ${SUB_COLORS[i % SUB_COLORS.length]}`}
+                                style={{ height: `${heightPct}%`, minHeight: '2px' }}
+                                title={`${subCat}: ${v}`}
+                              />
+                            )
+                          })}
+                        </div>
+                        <span className="text-slate-500 leading-none truncate w-full text-center text-xs">
+                          {dateLabel}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+                {/* 凡例 */}
+                <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2">
+                  {subEntries.map(([subCat], i) => (
+                    <span key={subCat} className="flex items-center gap-1 text-xs text-slate-400">
+                      <span className={`inline-block w-2.5 h-2.5 rounded-sm ${SUB_COLORS[i % SUB_COLORS.length]}`} />
+                      {subCat}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )
+          }
+
           const DaySelector = () => (
             <select
               value={dailyDays}
@@ -746,7 +801,7 @@ function App() {
                     <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{cat.label}</span>
                     <span className="text-xs text-slate-500">合計 {total}</span>
                   </div>
-                  <DailyBars cat={cat.key} color={cat.barColor} barHeight={120} />
+                  <StackedDailyBars barHeight={120} />
                 </div>
 
                 {/* サブカテゴリ別ヒストグラム */}
