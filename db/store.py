@@ -144,7 +144,8 @@ class EventStore:
     def delete_events_older_than(self, days: int) -> int:
         """指定日数より古いイベントとその関連ファイルを一括削除する"""
         from datetime import timedelta
-        cutoff = datetime.now() - timedelta(days=days)
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        cutoff = today - timedelta(days=days - 1)
         with self._session() as s:
             records = s.query(DetectionEventRecord).filter(
                 DetectionEventRecord.started_at < cutoff
