@@ -38,6 +38,7 @@ class DetectionEventRecord(Base):
 
     detections_json = Column(JSON)            # 検出ボックス生データ
     sub_category = Column(String(64))         # サブカテゴリ（LLM分類結果）
+    camera_name = Column(String(64), index=True)  # カメラ識別名 (event_idプレフィックス)
 
     __table_args__ = (
         Index("ix_events_started_type", "started_at", "detection_type"),
@@ -107,3 +108,15 @@ class Snapshot(Base):
     width = Column(Integer)
     height = Column(Integer)
     file_size_bytes = Column(Integer)
+
+
+class Camera(Base):
+    """カメラマスター"""
+    __tablename__ = "cameras"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(64), unique=True, nullable=False)   # event_idプレフィックスと一致
+    display_name = Column(String(256))
+    location = Column(String(256))
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now)

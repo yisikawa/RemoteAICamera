@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { DetectionEvent, EventsListResponse, SimilarResult, SubCategoryStat, Summary, DailyStat, DailySubStat } from './types';
+import type { DetectionEvent, EventsListResponse, SimilarResult, SubCategoryStat, Summary, DailyStat, DailySubStat, DailyStatByCamera, DailySubStatByCamera } from './types';
 
 const API_BASE = 'http://localhost:8000';
 
@@ -60,6 +60,16 @@ export const eventApi = {
 
   getDailySubStats: async (detectionType: string, days = 14): Promise<DailySubStat> => {
     const res = await api.get('/api/stats/daily-sub', { params: { detection_type: detectionType, days } });
+    return res.data;
+  },
+
+  getDailyStatsByCamera: async (days = 14): Promise<DailyStatByCamera[]> => {
+    const res = await api.get('/api/stats/daily-camera', { params: { days } });
+    return res.data;
+  },
+
+  getDailySubStatsByCamera: async (detectionType: string, days = 14): Promise<DailySubStatByCamera> => {
+    const res = await api.get('/api/stats/daily-sub-camera', { params: { detection_type: detectionType, days } });
     return res.data;
   },
 };

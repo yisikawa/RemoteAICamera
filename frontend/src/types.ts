@@ -52,8 +52,26 @@ export interface DailySubStat {
   sub_categories: Record<string, number[]>
 }
 
+export interface DailySubStatByCamera {
+  dates: string[]
+  cameras: string[]
+  sub_categories: string[]
+  data: Record<string, Record<string, number[]>>  // camera -> sub_cat -> counts per date
+}
+
 export interface DailyStat {
   date: string
+  person: number
+  car: number
+  motorcycle: number
+  bicycle: number
+  pet: number
+  other: number
+}
+
+export interface DailyStatByCamera {
+  date: string
+  camera_name: string
   person: number
   car: number
   motorcycle: number

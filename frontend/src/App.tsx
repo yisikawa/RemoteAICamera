@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { eventApi } from './api'
-import type { Summary, DetectionEvent, SimilarResult, SubCategoryStat, ClassifyProgress, DailyStat, DailySubStat } from './types'
+import type { Summary, DetectionEvent, SimilarResult, SubCategoryStat, ClassifyProgress, DailyStat, DailySubStat, DailyStatByCamera, DailySubStatByCamera } from './types'
 import './index.css'
 
 const WS_URL = 'ws://localhost:8000/ws'
@@ -201,6 +201,8 @@ function App() {
   const [dailyStats, setDailyStats] = useState<DailyStat[]>([])
   const [dailyDays, setDailyDays] = useState(14)
   const [dailySubStats, setDailySubStats] = useState<DailySubStat | null>(null)
+  const [dailyStatsByCamera, setDailyStatsByCamera] = useState<DailyStatByCamera[]>([])
+  const [dailySubStatsByCamera, setDailySubStatsByCamera] = useState<DailySubStatByCamera | null>(null)
   const [classifyProgress, setClassifyProgress] = useState<ClassifyProgress | null>(null)
   const [classifyLoading, setClassifyLoading] = useState(false)
   const classifySourceRef = useRef<EventSource | null>(null)
@@ -241,11 +243,15 @@ function App() {
     }
     if (activeTab === 'daily') {
       eventApi.getDailyStats(dailyDays).then(setDailyStats).catch(() => {})
+      eventApi.getDailyStatsByCamera(dailyDays).then(setDailyStatsByCamera).catch(() => {})
       if (activeFilter) {
         setDailySubStats(null)
+        setDailySubStatsByCamera(null)
         eventApi.getDailySubStats(activeFilter, dailyDays).then(setDailySubStats).catch(() => {})
+        eventApi.getDailySubStatsByCamera(activeFilter, dailyDays).then(setDailySubStatsByCamera).catch(() => {})
       } else {
         setDailySubStats(null)
+        setDailySubStatsByCamera(null)
       }
     }
   }, [activeTab, dailyDays, activeFilter])
@@ -717,35 +723,50 @@ function App() {
               const cat = CATS.find(c => c.key === activeFilter)
               return cat ? <DailyBars cat={cat.key} color={cat.barColor} barHeight={barHeight} /> : null
             }
+            const cat = CATS.find(c => c.key === activeFilter)
             const subEntries = Object.entries(dailySubStats.sub_categories) as [string, number[]][]
             const dates = dailySubStats.dates
-            const totals = dates.map((_, di) =>
-              subEntries.reduce((sum, [, vals]) => sum + (vals[di] ?? 0), 0)
-            )
-            const maxVal = Math.max(...totals, 1)
+            // dailyStats（全件）から正しい合計を取得し、未分類分を補完
+            const trueTotals = dates.map(date => {
+              const stat = dailyStats.find(d => d.date === date)
+              return stat && activeFilter ? (stat[activeFilter as keyof DailyStat] as number) : 0
+            })
+            const maxVal = Math.max(...trueTotals, 1)
+            const hasUnclassified = trueTotals.some((t, di) => {
+              const classified = subEntries.reduce((s, [, vs]) => s + (vs[di] ?? 0), 0)
+              return t > classified
+            })
             return (
               <div>
                 <div className="flex items-end gap-1" style={{ height: `${barHeight + 36}px` }}>
                   {dates.map((date, di) => {
-                    const total = totals[di]
+                    const trueTotal = trueTotals[di]
+                    const classified = subEntries.reduce((s, [, vs]) => s + (vs[di] ?? 0), 0)
+                    const unclassified = Math.max(trueTotal - classified, 0)
                     const dateLabel = date.slice(5)
                     return (
                       <div key={date} className="flex-1 flex flex-col items-center gap-1 min-w-0">
-                        <span className="text-slate-400 text-xs leading-none">{total > 0 ? total : ''}</span>
+                        <span className="text-slate-400 text-xs leading-none">{trueTotal > 0 ? trueTotal : ''}</span>
                         <div className="w-full flex flex-col-reverse" style={{ height: `${barHeight}px` }}>
                           {subEntries.map(([subCat, vals], i) => {
                             const v = vals[di] ?? 0
                             if (v === 0) return null
-                            const heightPct = (v / maxVal) * 100
                             return (
                               <div
                                 key={subCat}
                                 className={`w-full ${SUB_COLORS[i % SUB_COLORS.length]}`}
-                                style={{ height: `${heightPct}%`, minHeight: '2px' }}
+                                style={{ height: `${(v / maxVal) * 100}%`, minHeight: '2px' }}
                                 title={`${subCat}: ${v}`}
                               />
                             )
                           })}
+                          {unclassified > 0 && cat && (
+                            <div
+                              className={`w-full ${cat.barColor} opacity-30`}
+                              style={{ height: `${(unclassified / maxVal) * 100}%`, minHeight: '2px' }}
+                              title={`未分類: ${unclassified}`}
+                            />
+                          )}
                         </div>
                         <span className="text-slate-500 leading-none truncate w-full text-center text-xs">
                           {dateLabel}
@@ -762,6 +783,12 @@ function App() {
                       {subCat}
                     </span>
                   ))}
+                  {hasUnclassified && cat && (
+                    <span className="flex items-center gap-1 text-xs text-slate-500">
+                      <span className={`inline-block w-2.5 h-2.5 rounded-sm ${cat.barColor} opacity-30`} />
+                      未分類
+                    </span>
+                  )}
                 </div>
               </div>
             )
@@ -803,6 +830,96 @@ function App() {
                   </div>
                   <StackedDailyBars barHeight={120} />
                 </div>
+
+                {/* カメラ別ヒストグラム */}
+                {(() => {
+                  if (dailyStatsByCamera.length === 0) return null
+                  const camDates = Array.from(new Set(dailyStatsByCamera.map(d => d.date))).sort()
+                  const camNames = Array.from(new Set(dailyStatsByCamera.map(d => d.camera_name))).sort()
+                  const catKey = cat.key as keyof DailyStatByCamera
+                  const lookup: Record<string, Record<string, number>> = {}
+                  dailyStatsByCamera.forEach(d => {
+                    if (!lookup[d.date]) lookup[d.date] = {}
+                    lookup[d.date][d.camera_name] = d[catKey] as number
+                  })
+                  const camMax = Math.max(...dailyStatsByCamera.map(d => d[catKey] as number), 1)
+                  const CAM_BORDER = ['border-sky-500', 'border-orange-400']
+                  const CAM_TEXT   = ['text-sky-400',   'text-orange-400']
+                  const CAM_DOT    = ['bg-sky-500',      'bg-orange-400']
+                  const subCamData = dailySubStatsByCamera
+                  const hasSubCam  = subCamData && subCamData.sub_categories.length > 0
+                  return (
+                    <div className="bg-slate-900 rounded-xl p-4 mb-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">カメラ別</span>
+                        <div className="flex gap-3">
+                          {camNames.map((cam, ci) => (
+                            <span key={cam} className={`flex items-center gap-1 text-xs ${CAM_TEXT[ci % 2]}`}>
+                              <span className={`inline-block w-2.5 h-2.5 rounded-sm ${CAM_DOT[ci % 2]}`} />
+                              {cam}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex items-end gap-1.5" style={{ height: '156px' }}>
+                        {camDates.map(date => {
+                          const dateLabel = date.slice(5)
+                          const subDateIdx = hasSubCam ? subCamData!.dates.indexOf(date) : -1
+                          return (
+                            <div key={date} className="flex-1 flex flex-col items-center gap-1 min-w-0">
+                              <div className="w-full flex gap-0.5" style={{ height: '120px' }}>
+                                {camNames.map((cam, ci) => {
+                                  const v = lookup[date]?.[cam] ?? 0
+                                  const camSubData = hasSubCam ? subCamData!.data[cam] : null
+                                  return (
+                                    <div key={cam} className="flex-1 flex flex-col items-center justify-end min-w-0">
+                                      <span className={`text-xs leading-none mb-0.5 ${CAM_TEXT[ci % 2]}`}>
+                                        {v > 0 ? v : ''}
+                                      </span>
+                                      <div
+                                        className={`w-full flex flex-col-reverse border-b-2 ${CAM_BORDER[ci % 2]}`}
+                                        style={{ height: `${(v / camMax) * 100}px`, minHeight: v > 0 ? '2px' : '0' }}
+                                      >
+                                        {camSubData && subDateIdx >= 0
+                                          ? subCamData!.sub_categories.map((sub, si) => {
+                                              const sv = camSubData[sub]?.[subDateIdx] ?? 0
+                                              if (sv === 0) return null
+                                              return (
+                                                <div
+                                                  key={sub}
+                                                  className={`w-full ${SUB_COLORS[si % SUB_COLORS.length]}`}
+                                                  style={{ height: `${(sv / v) * 100}%`, minHeight: '2px' }}
+                                                  title={`${cam} ${sub}: ${sv}`}
+                                                />
+                                              )
+                                            })
+                                          : v > 0 && <div className={`w-full h-full ${cat.barColor}`} />
+                                        }
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                              <span className="text-slate-500 leading-none truncate w-full text-center text-xs">
+                                {dateLabel}
+                              </span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      {hasSubCam && (
+                        <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2">
+                          {subCamData!.sub_categories.map((sub, si) => (
+                            <span key={sub} className="flex items-center gap-1 text-xs text-slate-400">
+                              <span className={`inline-block w-2.5 h-2.5 rounded-sm ${SUB_COLORS[si % SUB_COLORS.length]}`} />
+                              {sub}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
 
                 {/* サブカテゴリ別ヒストグラム */}
                 <div className="bg-slate-900 rounded-xl p-4">
@@ -954,6 +1071,91 @@ function App() {
                   ))}
                 </div>
               </div>
+
+              {/* カメラ別積み上げヒストグラム */}
+              {(() => {
+                if (dailyStatsByCamera.length === 0) return null
+                const camDates = Array.from(new Set(dailyStatsByCamera.map(d => d.date))).sort()
+                const camNames = Array.from(new Set(dailyStatsByCamera.map(d => d.camera_name))).sort()
+                const lookup: Record<string, Record<string, DailyStatByCamera>> = {}
+                dailyStatsByCamera.forEach(d => {
+                  if (!lookup[d.date]) lookup[d.date] = {}
+                  lookup[d.date][d.camera_name] = d
+                })
+                const allTotals = dailyStatsByCamera.map(d =>
+                  CATS.reduce((s, c) => s + (d[c.key] as number), 0)
+                )
+                const camMax = Math.max(...allTotals, 1)
+                const CAM_BORDER = ['border-sky-500', 'border-orange-400']
+                const CAM_TEXT   = ['text-sky-400',   'text-orange-400']
+                const CAM_DOT    = ['bg-sky-500',      'bg-orange-400']
+                return (
+                  <div className="bg-slate-900 rounded-xl p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">カメラ別</span>
+                      <div className="flex gap-3">
+                        {camNames.map((cam, ci) => (
+                          <span key={cam} className={`flex items-center gap-1 text-xs ${CAM_TEXT[ci % 2]}`}>
+                            <span className={`inline-block w-2.5 h-2.5 rounded-sm ${CAM_DOT[ci % 2]}`} />
+                            {cam}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-end gap-1.5" style={{ height: '156px' }}>
+                      {camDates.map(date => {
+                        const dateLabel = date.slice(5)
+                        return (
+                          <div key={date} className="flex-1 flex flex-col items-center gap-1 min-w-0">
+                            <div className="w-full flex gap-0.5" style={{ height: '120px' }}>
+                              {camNames.map((cam, ci) => {
+                                const row = lookup[date]?.[cam]
+                                const total = row ? CATS.reduce((s, c) => s + (row[c.key] as number), 0) : 0
+                                return (
+                                  <div key={cam} className="flex-1 flex flex-col items-center justify-end min-w-0">
+                                    <span className={`text-xs leading-none mb-0.5 ${CAM_TEXT[ci % 2]}`}>
+                                      {total > 0 ? total : ''}
+                                    </span>
+                                    <div
+                                      className={`w-full flex flex-col-reverse border-b-2 ${CAM_BORDER[ci % 2]}`}
+                                      style={{ height: `${(total / camMax) * 100}px`, minHeight: total > 0 ? '2px' : '0' }}
+                                    >
+                                      {row && CATS.map(c => {
+                                        const v = row[c.key] as number
+                                        if (v === 0) return null
+                                        return (
+                                          <div
+                                            key={c.key}
+                                            className={`w-full ${c.barColor}`}
+                                            style={{ height: `${(v / total) * 100}%`, minHeight: '2px' }}
+                                            title={`${cam} ${c.label}: ${v}`}
+                                          />
+                                        )
+                                      })}
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                            <span className="text-slate-500 leading-none truncate w-full text-center text-xs">
+                              {dateLabel}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    {/* カテゴリ凡例 */}
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
+                      {CATS.map(c => (
+                        <span key={c.key} className="flex items-center gap-1 text-xs text-slate-400">
+                          <span className={`inline-block w-2.5 h-2.5 rounded-sm ${c.barColor}`} />
+                          {c.label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
 
               {/* カテゴリ別グリッド */}
               <div className="grid grid-cols-2 gap-4">

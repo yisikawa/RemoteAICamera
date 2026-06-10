@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from loguru import logger
 
 from sqlalchemy import or_
-from .models import Base, DetectionEventRecord, EventSimilarity, KnownPerson, KnownVehicle, Snapshot
+from .models import Base, DetectionEventRecord, EventSimilarity, KnownPerson, KnownVehicle, Snapshot, Camera
 from pipeline.detector import DetectionEvent
 
 
@@ -22,17 +22,63 @@ class EventStore:
         self._migrate()
         logger.info(f"EventStore initialized: {db_path}")
 
+    @staticmethod
+    def _extract_camera_name(event_id: Optional[str]) -> Optional[str]:
+        """event_id のアンダースコア前のプレフィックスをカメラ名として返す"""
+        if event_id and "_" in event_id:
+            return event_id.split("_")[0]
+        return None
+
+    def _ensure_camera(self, session: Session, camera_name: Optional[str]):
+        """cameras テーブルに camera_name が未登録なら追加（冪等）"""
+        if not camera_name:
+            return
+        if not session.query(Camera).filter_by(name=camera_name).first():
+            session.add(Camera(name=camera_name))
+
     def _migrate(self):
         """既存DBへのカラム追加マイグレーション（冪等）"""
+        import sqlalchemy as sa
         with self._engine.connect() as conn:
+            # sub_category 列（既存）
             try:
-                conn.execute(__import__("sqlalchemy").text(
+                conn.execute(sa.text(
                     "ALTER TABLE detection_events ADD COLUMN sub_category VARCHAR(64)"
                 ))
                 conn.commit()
                 logger.info("Migration: sub_category column added")
             except Exception:
-                pass  # 既にカラムが存在する場合はスキップ
+                pass
+
+            # camera_name 列（新規）
+            try:
+                conn.execute(sa.text(
+                    "ALTER TABLE detection_events ADD COLUMN camera_name VARCHAR(64)"
+                ))
+                conn.commit()
+                logger.info("Migration: camera_name column added")
+            except Exception:
+                pass
+
+            # バックフィル: event_id プレフィックスから camera_name を抽出
+            result = conn.execute(sa.text(
+                "UPDATE detection_events "
+                "SET camera_name = SUBSTR(event_id, 1, INSTR(event_id, '_') - 1) "
+                "WHERE camera_name IS NULL AND INSTR(event_id, '_') > 0"
+            ))
+            if result.rowcount > 0:
+                conn.commit()
+                logger.info(f"Migration: camera_name backfilled for {result.rowcount} records")
+
+            # cameras テーブルへシード（既存レコードから distinct camera_name を登録）
+            result = conn.execute(sa.text(
+                "INSERT OR IGNORE INTO cameras (name) "
+                "SELECT DISTINCT camera_name FROM detection_events "
+                "WHERE camera_name IS NOT NULL AND camera_name != ''"
+            ))
+            if result.rowcount > 0:
+                conn.commit()
+                logger.info(f"Migration: {result.rowcount} camera(s) seeded into cameras table")
 
     @contextmanager
     def _session(self):
@@ -77,6 +123,7 @@ class EventStore:
                 }
                 for d in event.best_detections
             ]
+            cam_name = self._extract_camera_name(event.event_id)
             record = DetectionEventRecord(
                 event_id=event.event_id,
                 started_at=datetime.fromtimestamp(event.started_at),
@@ -87,10 +134,12 @@ class EventStore:
                 snapshot_path=snapshot_path,
                 clip_path=clip_path,
                 detections_json=detections_data,
+                camera_name=cam_name,
             )
             event_id_log = event.event_id
         else:
             # 直接値から (ONVIF駆動型用)
+            cam_name = self._extract_camera_name(event_id)
             record = DetectionEventRecord(
                 event_id=event_id,
                 started_at=datetime.fromtimestamp(started_at) if started_at else datetime.now(),
@@ -101,6 +150,7 @@ class EventStore:
                 snapshot_path=snapshot_path,
                 clip_path=clip_path,
                 detections_json=detections_json or [],
+                camera_name=cam_name,
             )
             event_id_log = event_id or "unknown"
 
@@ -110,6 +160,7 @@ class EventStore:
                 logger.warning(f"Duplicate event_id skipped: {record.event_id}")
                 s.expunge(existing)
                 return existing
+            self._ensure_camera(s, cam_name)
             s.add(record)
         logger.debug(f"Event saved: {event_id_log} ({detection_type or 'motion'})")
         return record
@@ -355,6 +406,16 @@ class EventStore:
             s.expunge_all()
             return rows, total
 
+    def get_all_cameras(self, active_only: bool = False) -> list[Camera]:
+        """カメラマスタ一覧"""
+        with self._session() as s:
+            q = s.query(Camera)
+            if active_only:
+                q = q.filter_by(is_active=True)
+            rows = q.order_by(Camera.name).all()
+            s.expunge_all()
+            return rows
+
     def get_all_persons(self, active_only: bool = True) -> list[KnownPerson]:
         """人物マスタ一覧"""
         with self._session() as s:
@@ -471,6 +532,90 @@ class EventStore:
             "dates": dates,
             "sub_categories": {s: [pivot[s][d] for d in dates] for s in sub_cats},
         }
+
+    def get_daily_sub_stats_by_camera(self, detection_type: str, days: int = 14) -> dict:
+        """日別×カメラ×サブカテゴリの件数集計（直近 days 日分）"""
+        from datetime import timedelta
+        from sqlalchemy import func as _func
+        cutoff = datetime.now() - timedelta(days=days)
+        with self._session() as s:
+            rows = (
+                s.query(
+                    _func.date(DetectionEventRecord.started_at).label("date"),
+                    DetectionEventRecord.camera_name,
+                    DetectionEventRecord.sub_category,
+                    _func.count().label("count"),
+                )
+                .filter(
+                    DetectionEventRecord.started_at >= cutoff,
+                    DetectionEventRecord.detection_type == detection_type,
+                    DetectionEventRecord.sub_category.isnot(None),
+                    DetectionEventRecord.camera_name.isnot(None),
+                )
+                .group_by(
+                    _func.date(DetectionEventRecord.started_at),
+                    DetectionEventRecord.camera_name,
+                    DetectionEventRecord.sub_category,
+                )
+                .order_by(_func.date(DetectionEventRecord.started_at))
+                .all()
+            )
+        dates = sorted(set(str(r.date) for r in rows))
+        cameras = sorted(set(r.camera_name for r in rows if r.camera_name))
+        sub_cats = list(dict.fromkeys(r.sub_category for r in rows if r.sub_category))
+        date_idx = {d: i for i, d in enumerate(dates)}
+        data: dict[str, dict[str, list[int]]] = {
+            cam: {sub: [0] * len(dates) for sub in sub_cats}
+            for cam in cameras
+        }
+        for r in rows:
+            if r.camera_name and r.sub_category:
+                data[r.camera_name][r.sub_category][date_idx[str(r.date)]] = r.count
+        return {"dates": dates, "cameras": cameras, "sub_categories": sub_cats, "data": data}
+
+    def get_daily_stats_by_camera(self, days: int = 14) -> list[dict]:
+        """日別×カメラ×カテゴリの件数集計（直近 days 日分）"""
+        from datetime import timedelta
+        from sqlalchemy import func as _func
+        cutoff = datetime.now() - timedelta(days=days)
+        categories = ["person", "car", "motorcycle", "bicycle", "pet", "other"]
+        with self._session() as s:
+            rows = (
+                s.query(
+                    _func.date(DetectionEventRecord.started_at).label("date"),
+                    DetectionEventRecord.camera_name,
+                    DetectionEventRecord.detection_type,
+                    _func.count().label("count"),
+                )
+                .filter(DetectionEventRecord.started_at >= cutoff)
+                .group_by(
+                    _func.date(DetectionEventRecord.started_at),
+                    DetectionEventRecord.camera_name,
+                    DetectionEventRecord.detection_type,
+                )
+                .order_by(_func.date(DetectionEventRecord.started_at))
+                .all()
+            )
+        # {date: {camera: {cat: count}}}
+        day_cam: dict[str, dict[str, dict]] = {}
+        cameras: set[str] = set()
+        for r in rows:
+            d = str(r.date)
+            cam = r.camera_name or "unknown"
+            cameras.add(cam)
+            if d not in day_cam:
+                day_cam[d] = {}
+            if cam not in day_cam[d]:
+                day_cam[d][cam] = {cat: 0 for cat in categories}
+            if r.detection_type in categories:
+                day_cam[d][cam][r.detection_type] = r.count
+
+        result = []
+        for d in sorted(day_cam.keys()):
+            for cam in sorted(cameras):
+                entry = day_cam[d].get(cam, {cat: 0 for cat in categories})
+                result.append({"date": d, "camera_name": cam, **entry})
+        return result
 
     def get_daily_stats(self, days: int = 14) -> list[dict]:
         """日別×カテゴリの件数集計を返す（直近 days 日分）"""

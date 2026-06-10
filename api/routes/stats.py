@@ -24,6 +24,22 @@ def get_daily_stats(days: int = 14, store: EventStore = Depends(get_event_store)
     return store.get_daily_stats(days=days)
 
 
+@router.get("/daily-camera")
+def get_daily_camera_stats(days: int = 14, store: EventStore = Depends(get_event_store)):
+    """日別×カメラ×カテゴリの件数集計（直近 days 日分）"""
+    return store.get_daily_stats_by_camera(days=days)
+
+
+@router.get("/daily-sub-camera")
+def get_daily_sub_camera_stats(
+    detection_type: str,
+    days: int = 14,
+    store: EventStore = Depends(get_event_store),
+):
+    """日別×カメラ×サブカテゴリの件数集計（detection_type 指定必須）"""
+    return store.get_daily_sub_stats_by_camera(detection_type=detection_type, days=days)
+
+
 @router.get("/daily-sub")
 def get_daily_sub_stats(
     detection_type: str,
