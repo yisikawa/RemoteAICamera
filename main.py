@@ -22,6 +22,7 @@ from pipeline.detector import YOLODetector
 from pipeline.clip_analyzer import ClipAnalyzer
 from storage.file_store import FileStore
 from db.store import EventStore
+from ai.sub_category_client import SubCategoryClient, classify_other
 
 
 def setup_logging(level: str = "INFO", log_file: str = "data/app.log"):
@@ -118,8 +119,26 @@ def handle_clip(
             file_size_bytes=Path(snapshot_path).stat().st_size if snapshot_path else 0,
         )
 
+        # LLM サブカテゴリ自動分類
+        sub_cat = "不明"
+        try:
+            if detection_type == "other":
+                sub_cat = classify_other([
+                    {"class_name": d.class_name, "confidence": d.confidence}
+                    for d in result.best_detections
+                ])
+            elif snapshot_path:
+                sub_client = SubCategoryClient(
+                    base_url=cfg.ollama.base_url,
+                    model=cfg.ollama.vision_model,
+                )
+                sub_cat = sub_client.classify(snapshot_path, detection_type)
+            event_store.update_sub_category(event_id, sub_cat)
+        except Exception as e:
+            cam_log.warning(f"[{event_id}] Auto-classification failed: {e}")
+
         cam_log.info(
-            f"[EVENT] {event_id} | type={detection_type} | "
+            f"[EVENT] {event_id} | type={detection_type} | sub={sub_cat} | "
             f"confidence={result.best_confidence:.2f} | frames={result.frame_count} | "
             f"snapshot={Path(snapshot_path).name if snapshot_path else '?'} | "
             f"clip={Path(clip_path).name if clip_path else '?'}"
@@ -133,6 +152,7 @@ def handle_clip(
                 "event_id": event_id,
                 "camera": cam_cfg.name,
                 "detection_type": detection_type,
+                "sub_category": sub_cat,
                 "confidence": round(result.best_confidence, 2),
                 "snapshot_url": f"/media/snapshots/{Path(snapshot_path).relative_to('data/snapshots').as_posix()}" if snapshot_path else None,
             })

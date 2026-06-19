@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { eventApi } from './api'
-import type { Summary, DetectionEvent, SimilarResult, SubCategoryStat, ClassifyProgress, DailyStat, DailySubStat, DailyStatByCamera, DailySubStatByCamera } from './types'
+import type { Summary, DetectionEvent, SimilarResult, SubCategoryStat, DailyStat, DailySubStat, DailyStatByCamera, DailySubStatByCamera } from './types'
 import './index.css'
 
 const WS_URL = 'ws://localhost:8000/ws'
@@ -203,9 +203,7 @@ function App() {
   const [dailySubStats, setDailySubStats] = useState<DailySubStat | null>(null)
   const [dailyStatsByCamera, setDailyStatsByCamera] = useState<DailyStatByCamera[]>([])
   const [dailySubStatsByCamera, setDailySubStatsByCamera] = useState<DailySubStatByCamera | null>(null)
-  const [classifyProgress, setClassifyProgress] = useState<ClassifyProgress | null>(null)
-  const [classifyLoading, setClassifyLoading] = useState(false)
-  const classifySourceRef = useRef<EventSource | null>(null)
+
   const [similarResults, setSimilarResults] = useState<SimilarResult[]>([])
   const [similarLoading, setSimilarLoading] = useState(false)
   const [similarDone, setSimilarDone] = useState(0)
@@ -265,31 +263,6 @@ function App() {
     }).catch(() => {})
   }, [activeTab, activeFilter])
 
-  const handleClassify = useCallback((detectionType?: string) => {
-    if (classifySourceRef.current) classifySourceRef.current.close()
-    setClassifyLoading(true)
-    setClassifyProgress(null)
-
-    const url = detectionType
-      ? `${API_BASE}/api/stats/classify/stream?detection_type=${encodeURIComponent(detectionType)}`
-      : `${API_BASE}/api/stats/classify/stream`
-    const source = new EventSource(url)
-    classifySourceRef.current = source
-
-    source.onmessage = (e) => {
-      const data: ClassifyProgress = JSON.parse(e.data)
-      setClassifyProgress(data)
-      if (data.finished) {
-        setClassifyLoading(false)
-        source.close()
-        eventApi.getSubCategoryStats().then(setSubCategoryStats).catch(() => {})
-      }
-    }
-    source.onerror = () => {
-      setClassifyLoading(false)
-      source.close()
-    }
-  }, [])
 
   const handleFindSimilar = useCallback(() => {
     if (!selectedEvent) return
@@ -923,46 +896,14 @@ function App() {
 
                 {/* サブカテゴリ別ヒストグラム */}
                 <div className="bg-slate-900 rounded-xl p-4">
-                  <div className="flex items-center justify-between mb-4">
+                  <div className="mb-4">
                     <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
                       サブカテゴリ別日次
                     </h3>
-                    <button
-                      onClick={() => {
-                        handleClassify(activeFilter)
-                        if (activeFilter) {
-                          eventApi.getDailySubStats(activeFilter, dailyDays)
-                            .then(setDailySubStats).catch(() => {})
-                        }
-                      }}
-                      disabled={classifyLoading}
-                      className="text-xs text-sky-400 hover:text-sky-300 border border-sky-800 hover:border-sky-600 px-3 py-1.5 rounded-lg transition disabled:opacity-50 flex items-center gap-1.5"
-                    >
-                      {classifyLoading && (
-                        <span className="w-3 h-3 border-2 border-sky-400/40 border-t-sky-400 rounded-full animate-spin" />
-                      )}
-                      {classifyLoading ? '分類中...' : 'サブカテゴリ分類を実行'}
-                    </button>
                   </div>
-                  {classifyProgress && classifyLoading && (
-                    <div className="mb-4">
-                      <div className="flex justify-between text-xs text-slate-400 mb-1">
-                        <span>{classifyProgress.done} / {classifyProgress.total} 件分類済み</span>
-                        {classifyProgress.sub_category && (
-                          <span className="text-slate-300">最新: {classifyProgress.sub_category}</span>
-                        )}
-                      </div>
-                      <div className="w-full bg-slate-700 rounded-full h-1.5">
-                        <div
-                          className="bg-sky-500 h-1.5 rounded-full transition-all"
-                          style={{ width: classifyProgress.total > 0 ? `${(classifyProgress.done / classifyProgress.total) * 100}%` : '0%' }}
-                        />
-                      </div>
-                    </div>
-                  )}
                   {!dailySubStats || Object.keys(dailySubStats.sub_categories).length === 0 ? (
                     <div className="text-center text-slate-500 text-sm py-8">
-                      「サブカテゴリ分類を実行」ボタンを押すと内訳が表示されます
+                      データがありません
                     </div>
                   ) : (
                     <div className="grid grid-cols-2 gap-3">
@@ -1214,24 +1155,6 @@ function App() {
               .sort((a, b) => b.count - a.count)
           }
 
-          const ProgressBar = () => classifyProgress ? (
-            <div className="mb-5">
-              <div className="flex justify-between text-xs text-slate-400 mb-1">
-                <span>{classifyProgress.done} / {classifyProgress.total} 件分類済み</span>
-                {classifyProgress.sub_category && (
-                  <span className="text-slate-300">
-                    最新: {classifyProgress.sub_category}
-                  </span>
-                )}
-              </div>
-              <div className="w-full bg-slate-700 rounded-full h-1.5">
-                <div
-                  className="bg-sky-500 h-1.5 rounded-full transition-all"
-                  style={{ width: classifyProgress.total > 0 ? `${(classifyProgress.done / classifyProgress.total) * 100}%` : '0%' }}
-                />
-              </div>
-            </div>
-          ) : null
 
           // 個別カテゴリ選択時: そのカテゴリのみ・サブカテゴリ色分け・分類ボタンあり
           if (activeFilter !== null) {
@@ -1239,25 +1162,14 @@ function App() {
             const maxCount = Math.max(...rows.map(r => r.count), 1)
             return (
               <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 text-white">
-                <div className="flex items-center justify-between mb-5">
+                <div className="mb-5">
                   <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">
                     {CAT_LABEL[activeFilter] ?? activeFilter} サブカテゴリ統計
                   </h2>
-                  <button
-                    onClick={() => handleClassify(activeFilter)}
-                    disabled={classifyLoading}
-                    className="text-xs text-sky-400 hover:text-sky-300 border border-sky-800 hover:border-sky-600 px-3 py-1.5 rounded-lg transition disabled:opacity-50 flex items-center gap-1.5"
-                  >
-                    {classifyLoading && (
-                      <span className="w-3 h-3 border-2 border-sky-400/40 border-t-sky-400 rounded-full animate-spin" />
-                    )}
-                    {classifyLoading ? '分類中...' : 'サブカテゴリ分類を実行'}
-                  </button>
                 </div>
-                <ProgressBar />
                 {rows.length === 0 ? (
                   <div className="text-center text-slate-500 text-sm py-16">
-                    「サブカテゴリ分類を実行」ボタンを押すと集計が表示されます
+                    データがありません
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -1294,10 +1206,9 @@ function App() {
               <div className="mb-5">
                 <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">サブカテゴリ統計</h2>
               </div>
-              <ProgressBar />
               {categories.length === 0 ? (
                 <div className="text-center text-slate-500 text-sm py-16">
-                  カテゴリを選択して「サブカテゴリ分類を実行」ボタンを押してください
+                  データがありません
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-5">
